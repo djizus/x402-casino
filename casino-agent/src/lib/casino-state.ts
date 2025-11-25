@@ -270,14 +270,37 @@ export class CasinoTable {
     state.roundBets.clear();
     state.currentBet = 0;
 
-    for (const seat of seats) {
-      if (
-        state.folded.has(seat.id) ||
-        (holeCards.get(seat.id)?.length ?? 0) === 0 ||
-        seat.stack <= 0
-      ) {
-        if (seat.stack <= 0 && !state.folded.has(seat.id)) {
-          this.recordEvent(`${seat.displayName} is all-in and skips action during ${bettingRound}.`);
+    const activeOrder = seats.filter(
+      (seat) => !state.folded.has(seat.id) && (holeCards.get(seat.id)?.length ?? 0) > 0,
+    );
+    if (activeOrder.length === 0) {
+      return;
+    }
+
+    let actionsSinceRaise = 0;
+    let index = 0;
+
+    while (activeOrder.length > 0 && actionsSinceRaise < activeOrder.length) {
+      const seat = activeOrder[index % activeOrder.length];
+
+      if (state.folded.has(seat.id)) {
+        activeOrder.splice(index % activeOrder.length, 1);
+        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
+        continue;
+      }
+
+      if ((holeCards.get(seat.id)?.length ?? 0) === 0) {
+        activeOrder.splice(index % activeOrder.length, 1);
+        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
+        continue;
+      }
+
+      if (seat.stack <= 0) {
+        this.recordEvent(`${seat.displayName} is all-in and skips action during ${bettingRound}.`);
+        activeOrder.splice(index % activeOrder.length, 1);
+        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
+        if (activeOrder.length <= 1) {
+          break;
         }
         continue;
       }
@@ -314,8 +337,26 @@ export class CasinoTable {
       const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
 
       const action = actionResponseSchema.parse(result.output ?? {});
-      this.applyAction(seat, action, bettingRound, state, legalActions);
+      const resolved = this.applyAction(seat, action, bettingRound, state, legalActions);
+
+      if (resolved === 'fold') {
+        activeOrder.splice(index % activeOrder.length, 1);
+        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
+        if (activeOrder.length <= 1) {
+          break;
+        }
+        continue;
+      }
+
+      if (resolved === 'bet' || resolved === 'raise') {
+        actionsSinceRaise = 1;
+      } else {
+        actionsSinceRaise += 1;
+      }
+
+      index += 1;
     }
+  }
   }
   private recordEvent(message: string): void {
     const entry = `[${new Date().toISOString()}] ${message}`;
@@ -343,7 +384,7 @@ export class CasinoTable {
       currentBet: number;
     },
     allowedActions: string[],
-  ): void {
+  ): 'fold' | 'call' | 'check' | 'bet' | 'raise' {
     const setMessage = (message: string) => {
       this.lastMessage = message;
       this.recordEvent(message);
@@ -369,7 +410,7 @@ export class CasinoTable {
       case 'fold':
         state.folded.add(seat.id);
         setMessage(`${seat.displayName} folded during ${round}.`);
-        break;
+        return 'fold';
       case 'bet':
       case 'raise':
       case 'all-in': {
@@ -382,11 +423,13 @@ export class CasinoTable {
           const newContribution = (state.roundBets.get(seat.id) ?? 0) + amount;
           state.roundBets.set(seat.id, newContribution);
           state.currentBet = Math.max(state.currentBet, newContribution);
-          setMessage(`${seat.displayName} bet ${amount} during ${round}.`);
+          const actionLabel = normalizedAction === 'raise' ? 'raise' : 'bet';
+          setMessage(`${seat.displayName} ${actionLabel} ${amount} during ${round}.`);
+          return actionLabel;
         } else {
           setMessage(`${seat.displayName} checked during ${round}.`);
+          return 'check';
         }
-        break;
       }
       case 'call': {
         const contribution = state.roundBets.get(seat.id) ?? 0;
@@ -398,15 +441,16 @@ export class CasinoTable {
           state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + callAmount);
           state.roundBets.set(seat.id, contribution + callAmount);
           setMessage(`${seat.displayName} called ${callAmount} during ${round}.`);
+          return 'call';
         } else {
           setMessage(`${seat.displayName} checked during ${round}.`);
+          return 'check';
         }
-        break;
       }
       case 'check':
       default:
         setMessage(`${seat.displayName} chose to ${normalizedAction} during ${round}.`);
-        break;
+        return 'check';
     }
   }
 
