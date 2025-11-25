@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+**/node_modules/
+bun.lockb
+
+# Build output
+dist/
+build/
+.out/
+.cache/
+coverage/
+**/dist/
+**/build/
+**/.out/
+**/.cache/
+**/coverage/
+
+# TypeScript artifacts
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Runtime files
+*.log
+logs/
+tmp/
+**/*.log
+**/logs/
+**/tmp/
+
+# Environment & secrets
+.env
+.env.*
+.env.local
+*.env
+*.env.*
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*
+!*.env.example
+!**/.env.example
+
+# IDEs & OS cruft
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+**/.idea/
+**/.vscode/
+**/*.swp
+**/.DS_Store
+**/Thumbs.db
