@@ -150,6 +150,10 @@ export class CasinoTable {
       for (let handIndex = 0; handIndex < config.maxHands; handIndex += 1) {
         await this.playHand(config);
         this.handCount += 1;
+        if (this.hasBankruptPlayer()) {
+          this.recordEvent('A player busted. Ending the session early.');
+          break;
+        }
       }
       this.status = 'idle';
       this.lastMessage = `Completed ${config.maxHands} hand${config.maxHands > 1 ? 's' : ''}.`;
@@ -437,5 +441,9 @@ export class CasinoTable {
 
     this.lastMessage = `Pot ${state.pot} awarded to ${winnerNames}. Each receives ${share}.`;
     this.recordEvent(this.lastMessage);
+  }
+  private hasBankruptPlayer(): boolean {
+    const stacks = Array.from(this.players.values()).map((player) => player.stack);
+    return stacks.some((stack) => stack <= 0);
   }
 }
