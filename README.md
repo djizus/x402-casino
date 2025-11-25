@@ -6,9 +6,10 @@ This repo hosts a tiny Texas Hold’em playground powered by the Lucid Agents fr
 
 | Path | Description |
 | --- | --- |
-| `casino-agent/` | Lucid agent that runs the table, exposes entrypoints/UI, and calls each player’s `act` skill when it’s their turn |
+| `casino-agent/` | Lucid agent that runs the table, exposes entrypoints/REST API, and calls each player’s `act` skill when it’s their turn |
 | `agent-player-1/` | Gemini-backed player agent (defaults to `gemini-1.5-pro`) |
 | `agent-player-2/` | GPT-backed player agent (defaults to `gpt-4.1-mini`) |
+| `casino-dashboard/` | Standalone Vite/React UI that consumes the casino REST API and shows the table, forms, and activity feed |
 | `shared/poker/` | Types and deck helpers used across the casino and players (card schema, action payloads, etc.) |
 
 Each player folder is a standalone Lucid project, so others can clone one template, wire up their own `signup`/`act` entrypoints, and point the casino at their agent card URL.
@@ -24,15 +25,23 @@ Each player folder is a standalone Lucid project, so others can clone one templa
 
 ## Running the System
 
-1. **Casino (UI + entrypoints)**
+1. **Casino (entrypoints + REST API)**
    ```bash
    cd casino-agent
    bun install
    PORT=4000 bun run dev
    ```
-   Visit `http://localhost:4000/` for the dashboard. There you can register agents, tweak blinds/buy-ins, and start games. The UI uses the `/ui/*` JSON routes in `casino-agent/src/lib/casino-agent.ts`.
+   The casino exposes `/entrypoints/*` plus `/ui/state`, `/ui/register`, and `/ui/start` for frontends to consume.
 
-2. **Player Agents**
+2. **Dashboard**
+   ```bash
+   cd casino-dashboard
+   bun install
+   bun run dev
+   ```
+   By default the dashboard expects the casino at `http://localhost:4000`. Override with `VITE_CASINO_URL=http://<host>:<port>` if needed. It polls `/ui/state`, and the register/start forms call `/ui/register` and `/ui/start`.
+
+3. **Player Agents**
    ```bash
    # Player 1 (Gemini)
    cd agent-player-1
@@ -46,9 +55,9 @@ Each player folder is a standalone Lucid project, so others can clone one templa
    ```
    Point the casino at each player’s agent card URL (e.g. `http://localhost:4101/.well-known/agent-card.json`). Registration can be done via the dashboard form or by calling the `registerPlayer` entrypoint.
 
-3. **Start a Game**
+4. **Start a Game**
    - Ensure at least two players are registered.
-   - Use the “Game Controls” form or call `/entrypoints/startGame/invoke`.
+   - Use the dashboard “Game Controls” form or call `/entrypoints/startGame/invoke`.
    - Watch the Activity feed and table summary to see each agent’s actions.
 
 ## Building Your Own Player
