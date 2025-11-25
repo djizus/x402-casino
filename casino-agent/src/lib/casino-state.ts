@@ -217,6 +217,8 @@ export class CasinoTable {
       pot: 0,
       contributions: new Map<string, number>(),
       folded: new Set<string>(),
+      roundBets: new Map<string, number>(),
+      currentBet: 0,
     };
 
     await this.playBettingRound('preflop', seats, holeCards, communityCards, config, bettingState);
@@ -250,8 +252,13 @@ export class CasinoTable {
       pot: number;
       contributions: Map<string, number>;
       folded: Set<string>;
+      roundBets: Map<string, number>;
+      currentBet: number;
     },
   ): Promise<void> {
+    state.roundBets.clear();
+    state.currentBet = 0;
+
     for (const seat of seats) {
       if (state.folded.has(seat.id) || (holeCards.get(seat.id)?.length ?? 0) === 0) {
         continue;
@@ -262,6 +269,18 @@ export class CasinoTable {
         continue;
       }
 
+      const roundContribution = state.roundBets.get(seat.id) ?? 0;
+      const amountToCall = Math.max(0, state.currentBet - roundContribution);
+
+      const legalActions =
+        amountToCall > 0
+          ? seat.stack > amountToCall
+            ? ['call', 'raise', 'fold']
+            : ['call', 'fold']
+          : seat.stack > 0
+          ? ['check', 'bet', 'fold']
+          : ['check', 'fold'];
+
       const actionRequest = actionRequestSchema.parse({
         tableId: this.tableId,
         bettingRound,
@@ -269,9 +288,9 @@ export class CasinoTable {
         holeCards: cards,
         pot: state.pot,
         minimumRaise: config.smallBlind,
-        currentBet: 0,
+        currentBet: amountToCall,
         playerStack: seat.stack,
-        legalActions: seat.stack > 0 ? ['check', 'bet', 'fold'] : ['check', 'fold'],
+        legalActions,
       });
 
       const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
@@ -302,6 +321,8 @@ export class CasinoTable {
       pot: number;
       contributions: Map<string, number>;
       folded: Set<string>;
+      roundBets: Map<string, number>;
+      currentBet: number;
     },
   ): void {
     const setMessage = (message: string) => {
@@ -323,13 +344,30 @@ export class CasinoTable {
           seat.stack -= amount;
           state.pot += amount;
           state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + amount);
+          const newContribution = (state.roundBets.get(seat.id) ?? 0) + amount;
+          state.roundBets.set(seat.id, newContribution);
+          state.currentBet = Math.max(state.currentBet, newContribution);
           setMessage(`${seat.displayName} bet ${amount} during ${round}.`);
         } else {
           setMessage(`${seat.displayName} checked during ${round}.`);
         }
         break;
       }
-      case 'call':
+      case 'call': {
+        const contribution = state.roundBets.get(seat.id) ?? 0;
+        const amountToCall = Math.max(0, state.currentBet - contribution);
+        const callAmount = Math.min(amountToCall, seat.stack);
+        if (callAmount > 0) {
+          seat.stack -= callAmount;
+          state.pot += callAmount;
+          state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + callAmount);
+          state.roundBets.set(seat.id, contribution + callAmount);
+          setMessage(`${seat.displayName} called ${callAmount} during ${round}.`);
+        } else {
+          setMessage(`${seat.displayName} checked during ${round}.`);
+        }
+        break;
+      }
       case 'check':
       default:
         setMessage(`${seat.displayName} chose to ${action.action} during ${round}.`);
