@@ -357,7 +357,6 @@ export class CasinoTable {
       index += 1;
     }
   }
-  }
   private recordEvent(message: string): void {
     const entry = `[${new Date().toISOString()}] ${message}`;
     this.eventLog.push(entry);
