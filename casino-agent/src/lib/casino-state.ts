@@ -260,7 +260,14 @@ export class CasinoTable {
     state.currentBet = 0;
 
     for (const seat of seats) {
-      if (state.folded.has(seat.id) || (holeCards.get(seat.id)?.length ?? 0) === 0) {
+      if (
+        state.folded.has(seat.id) ||
+        (holeCards.get(seat.id)?.length ?? 0) === 0 ||
+        seat.stack <= 0
+      ) {
+        if (seat.stack <= 0 && !state.folded.has(seat.id)) {
+          this.recordEvent(`${seat.displayName} is all-in and skips action during ${bettingRound}.`);
+        }
         continue;
       }
 
