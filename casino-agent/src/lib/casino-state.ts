@@ -26,6 +26,7 @@ interface RegisteredPlayer extends PlayerSeat {
 
 const statusValues = ['waiting', 'running', 'idle', 'error'] as const;
 type TableStatus = (typeof statusValues)[number];
+const CHIP_EPSILON = 1e-6;
 
 type CasinoRuntime = AgentRuntime & {
   meta: { name: string };
@@ -146,20 +147,26 @@ export class CasinoTable {
     this.lastMessage = undefined;
     this.recordEvent(`Starting ${config.maxHands} hand${config.maxHands > 1 ? 's' : ''} at table ${this.tableId}.`);
 
+    const initialHandCount = this.handCount;
+    let bustedSeat: RegisteredPlayer | undefined;
+
     try {
       for (let handIndex = 0; handIndex < config.maxHands; handIndex += 1) {
         await this.playHand(config);
         this.handCount += 1;
-        if (this.hasBankruptPlayer()) {
-          this.recordEvent('A player busted. Ending the session early.');
+        bustedSeat = this.findBankruptSeat();
+        if (bustedSeat) {
+          this.recordEvent(`${bustedSeat.displayName} is out of chips. Ending the session.`);
           break;
         }
       }
+
+      const handsPlayed = this.handCount - initialHandCount;
       this.status = 'idle';
-      this.lastMessage = `Completed ${config.maxHands} hand${config.maxHands > 1 ? 's' : ''}.`;
-      if (this.lastMessage) {
-        this.recordEvent(this.lastMessage);
-      }
+      this.lastMessage = bustedSeat
+        ? `Session stopped after ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'} (${bustedSeat.displayName} busted).`
+        : `Completed ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'}.`;
+      this.recordEvent(this.lastMessage);
     } catch (error) {
       this.status = 'error';
       this.lastMessage =
@@ -307,7 +314,7 @@ export class CasinoTable {
       const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
 
       const action = actionResponseSchema.parse(result.output ?? {});
-      this.applyAction(seat, action, bettingRound, state);
+      this.applyAction(seat, action, bettingRound, state, legalActions);
     }
   }
   private recordEvent(message: string): void {
@@ -335,13 +342,30 @@ export class CasinoTable {
       roundBets: Map<string, number>;
       currentBet: number;
     },
+    allowedActions: string[],
   ): void {
     const setMessage = (message: string) => {
       this.lastMessage = message;
       this.recordEvent(message);
     };
 
-    switch (action.action) {
+    const request = action.action;
+    const allow = (name: string) => allowedActions.includes(name);
+
+    let normalizedAction = request;
+    if (!allow(request)) {
+      if ((request === 'check' || request === 'bet' || request === 'raise') && allow('call')) {
+        normalizedAction = 'call';
+      } else if (allow('check')) {
+        normalizedAction = 'check';
+      } else if (allow('call')) {
+        normalizedAction = 'call';
+      } else if (allow('fold')) {
+        normalizedAction = 'fold';
+      }
+    }
+
+    switch (normalizedAction) {
       case 'fold':
         state.folded.add(seat.id);
         setMessage(`${seat.displayName} folded during ${round}.`);
@@ -381,7 +405,7 @@ export class CasinoTable {
       }
       case 'check':
       default:
-        setMessage(`${seat.displayName} chose to ${action.action} during ${round}.`);
+        setMessage(`${seat.displayName} chose to ${normalizedAction} during ${round}.`);
         break;
     }
   }
@@ -443,7 +467,16 @@ export class CasinoTable {
     this.recordEvent(this.lastMessage);
   }
   private hasBankruptPlayer(): boolean {
-    const stacks = Array.from(this.players.values()).map((player) => player.stack);
-    return stacks.some((stack) => stack <= 0);
+    return Boolean(this.findBankruptSeat());
+  }
+
+  private findBankruptSeat(): RegisteredPlayer | undefined {
+    const players = Array.from(this.players.values());
+    const broke = players.filter((player) => player.stack <= CHIP_EPSILON);
+    const healthy = players.filter((player) => player.stack > CHIP_EPSILON);
+    if (broke.length > 0 && healthy.length > 0) {
+      return broke[0];
+    }
+    return undefined;
   }
 }
