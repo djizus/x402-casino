@@ -18,6 +18,7 @@ import {
   tableSummarySchema,
 } from '../../../shared/poker/types';
 import { cardToString, createDeck, drawCards, shuffleDeck } from '../../../shared/poker/cards';
+import { evaluateBestHand, compareHandScores, describeHand } from '../../../shared/poker/hand-evaluator';
 
 interface RegisteredPlayer extends PlayerSeat {
   card: AgentCard;
@@ -124,7 +125,7 @@ export class CasinoTable {
       seatNumber,
       displayName,
       actionSkill,
-      stack: startingStack,
+      stack: player.stack,
     };
 
     this.recordEvent(`${displayName} joined the table (seat ${seatNumber}).`);
@@ -212,17 +213,24 @@ export class CasinoTable {
     }
 
     const communityCards: Card[] = [];
+    const bettingState = {
+      pot: 0,
+      contributions: new Map<string, number>(),
+      folded: new Set<string>(),
+    };
 
-    await this.playBettingRound('preflop', seats, holeCards, communityCards, config);
+    await this.playBettingRound('preflop', seats, holeCards, communityCards, config, bettingState);
 
     communityCards.push(...drawCards(deck, 3));
-    await this.playBettingRound('flop', seats, holeCards, communityCards, config);
+    await this.playBettingRound('flop', seats, holeCards, communityCards, config, bettingState);
 
     communityCards.push(...drawCards(deck, 1));
-    await this.playBettingRound('turn', seats, holeCards, communityCards, config);
+    await this.playBettingRound('turn', seats, holeCards, communityCards, config, bettingState);
 
     communityCards.push(...drawCards(deck, 1));
-    await this.playBettingRound('river', seats, holeCards, communityCards, config);
+    await this.playBettingRound('river', seats, holeCards, communityCards, config, bettingState);
+
+    this.settlePot(seats, holeCards, communityCards, bettingState);
 
     this.lastMessage = `Hand #${this.handCount + 1} completed. Community cards: ${communityCards
       .map(cardToString)
@@ -238,8 +246,17 @@ export class CasinoTable {
     holeCards: Map<string, Card[]>,
     communityCards: Card[],
     config: StartGameInput,
+    state: {
+      pot: number;
+      contributions: Map<string, number>;
+      folded: Set<string>;
+    },
   ): Promise<void> {
     for (const seat of seats) {
+      if (state.folded.has(seat.id) || (holeCards.get(seat.id)?.length ?? 0) === 0) {
+        continue;
+      }
+
       const cards = holeCards.get(seat.id);
       if (!cards) {
         continue;
@@ -250,26 +267,17 @@ export class CasinoTable {
         bettingRound,
         communityCards,
         holeCards: cards,
-        pot: 0,
-        minimumRaise: config.bigBlind,
+        pot: state.pot,
+        minimumRaise: config.smallBlind,
         currentBet: 0,
         playerStack: seat.stack,
-        legalActions: ['check', 'bet', 'fold'],
+        legalActions: seat.stack > 0 ? ['check', 'bet', 'fold'] : ['check', 'fold'],
       });
 
-      const result = await this.requireA2ARuntime().client.invoke(
-        seat.card,
-        seat.actionSkill,
-        actionRequest,
-      );
+      const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
 
       const action = actionResponseSchema.parse(result.output ?? {});
-      this.lastMessage = `${seat.displayName} chose to ${action.action}${
-        action.amount ? ` ${action.amount}` : ''
-      } during ${bettingRound}.`;
-      if (this.lastMessage) {
-        this.recordEvent(this.lastMessage);
-      }
+      this.applyAction(seat, action, bettingRound, state);
     }
   }
   private recordEvent(message: string): void {
@@ -284,5 +292,105 @@ export class CasinoTable {
       throw new Error('A2A runtime not configured for the casino agent.');
     }
     return this.runtime.a2a;
+  }
+
+  private applyAction(
+    seat: RegisteredPlayer,
+    action: { action: string; amount?: number },
+    round: BettingRound,
+    state: {
+      pot: number;
+      contributions: Map<string, number>;
+      folded: Set<string>;
+    },
+  ): void {
+    const setMessage = (message: string) => {
+      this.lastMessage = message;
+      this.recordEvent(message);
+    };
+
+    switch (action.action) {
+      case 'fold':
+        state.folded.add(seat.id);
+        setMessage(`${seat.displayName} folded during ${round}.`);
+        break;
+      case 'bet':
+      case 'raise':
+      case 'all-in': {
+        const requested = typeof action.amount === 'number' && Number.isFinite(action.amount) ? action.amount : 0;
+        const amount = Math.max(0, Math.min(requested, seat.stack));
+        if (amount > 0) {
+          seat.stack -= amount;
+          state.pot += amount;
+          state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + amount);
+          setMessage(`${seat.displayName} bet ${amount} during ${round}.`);
+        } else {
+          setMessage(`${seat.displayName} checked during ${round}.`);
+        }
+        break;
+      }
+      case 'call':
+      case 'check':
+      default:
+        setMessage(`${seat.displayName} chose to ${action.action} during ${round}.`);
+        break;
+    }
+  }
+
+  private settlePot(
+    seats: RegisteredPlayer[],
+    holeCards: Map<string, Card[]>,
+    communityCards: Card[],
+    state: {
+      pot: number;
+      folded: Set<string>;
+    },
+  ): void {
+    if (state.pot <= 0) {
+      this.lastMessage = 'Hand completed with no chips in the pot.';
+      this.recordEvent(this.lastMessage);
+      return;
+    }
+
+    const activeSeats = seats.filter((seat) => !state.folded.has(seat.id));
+
+    if (activeSeats.length === 1) {
+      const winner = activeSeats[0];
+      winner.stack += state.pot;
+      this.lastMessage = `${winner.displayName} wins ${state.pot} (everyone else folded).`;
+      this.recordEvent(this.lastMessage);
+      return;
+    }
+
+    const evaluations = activeSeats
+      .map((seat) => {
+        const cards = [...(holeCards.get(seat.id) ?? []), ...communityCards];
+        return {
+          seat,
+          score: evaluateBestHand(cards),
+        };
+      })
+      .filter((entry) => entry.score);
+
+    if (evaluations.length === 0) {
+      this.recordEvent('No active players to settle the pot.');
+      return;
+    }
+
+    evaluations.sort((a, b) => compareHandScores(b.score, a.score));
+    const bestScore = evaluations[0].score;
+    const winners = evaluations.filter((entry) => compareHandScores(entry.score, bestScore) === 0);
+
+    const share = state.pot / winners.length;
+    winners.forEach((winner) => {
+      winner.seat.stack += share;
+    });
+
+    const winnerNames = winners
+      .map((winner) => `${winner.seat.displayName} (${describeHand(winner.score)})`)
+      .join(', ');
+
+    this.lastMessage = `Pot ${state.pot} awarded to ${winnerNames}. Each receives ${share}.`;
+    this.recordEvent(this.lastMessage);
   }
 }
