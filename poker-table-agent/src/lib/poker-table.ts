@@ -102,6 +102,10 @@ export class PokerTable {
       throw new Error('Table is not configured.');
     }
 
+    if (this.players.size >= this.tableConfig.maxSeats) {
+      throw new Error(`Table ${this.tableId} is full (${this.tableConfig.maxSeats} seats).`);
+    }
+
     const seatNumber = this.findSeat(input.preferredSeat);
     const a2a = this.requireA2ARuntime();
     const card = await a2a.fetchCard(input.agentCardUrl);

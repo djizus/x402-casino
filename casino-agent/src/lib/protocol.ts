@@ -7,6 +7,7 @@ export const tableConfigSchema = z.object({
   minBuyIn: z.number().positive().default(0.1),
   maxBuyIn: z.number().positive().default(1),
   maxHands: z.number().int().positive().default(1),
+  maxSeats: z.number().int().min(2).max(10).default(6),
 });
 export type TableConfig = z.infer<typeof tableConfigSchema>;
 
@@ -110,6 +111,7 @@ export const createRoomInputSchema = z.object({
     minBuyIn: 0.1,
     maxBuyIn: 1,
     maxHands: 1,
+    maxSeats: 6,
   }),
   launchOptions: z
     .object({

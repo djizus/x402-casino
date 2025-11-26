@@ -20,6 +20,7 @@ export type TableConfig = {
   minBuyIn: number;
   maxBuyIn: number;
   maxHands: number;
+  maxSeats: number;
 };
 
 export type TableEvent = {
@@ -74,6 +75,7 @@ export type CreateRoomPayload = {
   minBuyIn: number;
   maxBuyIn: number;
   maxHands: number;
+  maxSeats: number;
 };
 
 export type RegisterPayload = {

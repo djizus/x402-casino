@@ -89,6 +89,7 @@ const tableConfigSchema = z.object({
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
+  maxSeats: z.number().int().min(2).max(10),
 });
 
 const createRoomInputSchema = z.object({

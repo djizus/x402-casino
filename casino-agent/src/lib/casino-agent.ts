@@ -58,6 +58,7 @@ const defaultConfig = tableConfigSchema.parse({
   maxHands: toNumber(process.env.MAX_HANDS, 1),
   minBuyIn: toNumber(process.env.MIN_BUY_IN, 0.1),
   maxBuyIn: toNumber(process.env.MAX_BUY_IN, 1),
+  maxSeats: Math.min(Math.max(toNumber(process.env.MAX_SEATS, 6), 2), 10),
 });
 
 const embeddedWorkdir =

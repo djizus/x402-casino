@@ -218,6 +218,7 @@ export class RoomManager {
     });
 
     await this.refreshSummary(room);
+    await this.maybeAutoStart(room);
     return parsed;
   }
 
@@ -289,6 +290,27 @@ export class RoomManager {
       events: [...room.events],
     };
     return roomSnapshotSchema.parse(snapshot);
+  }
+
+  private async maybeAutoStart(room: RoomState): Promise<void> {
+    if (!room.config.maxSeats) {
+      return;
+    }
+    if (!room.summary) {
+      return;
+    }
+    if (room.summary.status === 'running') {
+      return;
+    }
+    if (room.summary.players.length < room.config.maxSeats) {
+      return;
+    }
+
+    try {
+      await this.startRoom({ roomId: room.roomId });
+    } catch (error) {
+      console.error(`[casino-agent] Failed to auto-start room ${room.roomId}:`, error);
+    }
   }
 
   public async shutdown(): Promise<void> {

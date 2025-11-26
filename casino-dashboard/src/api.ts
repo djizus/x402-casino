@@ -42,6 +42,7 @@ export const createRoom = async (input: CreateRoomPayload) => {
     minBuyIn: input.minBuyIn,
     maxBuyIn: input.maxBuyIn,
     maxHands: input.maxHands,
+    maxSeats: input.maxSeats,
   };
   if (typeof input.tablePort === 'number') {
     body.launchOptions = { port: input.tablePort };

@@ -27,6 +27,7 @@ const defaultCreateForm = {
   minBuyIn: '0.1',
   maxBuyIn: '1',
   maxHands: '1',
+  maxSeats: '6',
 };
 
 const defaultRegisterForm = {
@@ -77,6 +78,7 @@ export function App() {
         maxBuyIn: String(data.defaultConfig.maxBuyIn),
         maxHands: String(data.defaultConfig.maxHands),
         tableAgentCardUrl: prev.tableAgentCardUrl || DEFAULT_TABLE_AGENT_CARD_URL,
+        maxSeats: String(data.defaultConfig.maxSeats),
       }));
       setCreateInitialized(true);
     }
@@ -132,6 +134,7 @@ export function App() {
         minBuyIn: Number(createForm.minBuyIn),
         maxBuyIn: Number(createForm.maxBuyIn),
         maxHands: Number(createForm.maxHands),
+        maxSeats: Number(createForm.maxSeats),
       };
       const room = await createRoom(payload);
       setCreateToast({ kind: 'success', text: `Created room ${room.roomId}.` });
@@ -274,13 +277,17 @@ export function App() {
                 placeholder="Auto-select"
               />
             </div>
-            {(['startingStack', 'smallBlind', 'bigBlind', 'minBuyIn', 'maxBuyIn', 'maxHands'] as const).map((key) => (
+            {(
+              ['startingStack', 'smallBlind', 'bigBlind', 'minBuyIn', 'maxBuyIn', 'maxHands', 'maxSeats'] as const
+            ).map((key) => (
               <div key={key}>
                 <label htmlFor={`create-${key}`}>{key}</label>
                 <input
                   id={`create-${key}`}
                   type="number"
-                  step="0.01"
+                  step={key === 'maxSeats' ? 1 : 0.01}
+                  min={key === 'maxSeats' ? 2 : undefined}
+                  max={key === 'maxSeats' ? 10 : undefined}
                   required
                   value={(createForm as Record<string, string>)[key]}
                   onChange={(e) => setCreateForm((prev) => ({ ...prev, [key]: e.target.value }))}
