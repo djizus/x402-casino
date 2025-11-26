@@ -33,7 +33,7 @@ export const actionKindSchema = z.enum(["fold", "check", "call", "bet", "raise",
 export type ActionKind = z.infer<typeof actionKindSchema>;
 
 export const actionRequestSchema = z.object({
-  tableId: z.string(),
+  roomId: z.string(),
   bettingRound: bettingRoundSchema,
   communityCards: z.array(cardSchema),
   holeCards: z.array(cardSchema).length(2),
@@ -54,7 +54,6 @@ export type ActionResponse = z.infer<typeof actionResponseSchema>;
 
 export const signupInvitationSchema = z.object({
   casinoName: z.string(),
-  tableId: z.string(),
   roomId: z.string(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),

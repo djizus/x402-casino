@@ -1,13 +1,13 @@
 # Lucid Poker Agents
 
-This repo hosts a tiny Texas Hold’em playground powered by the Lucid Agents framework. A casino lobby agent coordinates rooms, dedicated poker-table agents run games, and multiple player agents register via A2A to battle each other. The poker logic is intentionally simple but still settles pots, demonstrates typed entrypoints, LLM-backed strategies, and a dashboard for operator control.
+This repo hosts a tiny Texas Hold’em playground powered by the Lucid Agents framework. A casino lobby agent coordinates rooms, dedicated poker room agents run games, and multiple player agents register via A2A to battle each other. The poker logic is intentionally simple but still settles pots, demonstrates typed entrypoints, LLM-backed strategies, and a dashboard for operator control.
 
 ## Directory Layout
 
 | Path | Description |
 | --- | --- |
 | `casino-agent/` | Casino “lobby” agent that exposes entrypoints/REST API, manages rooms, and relays registrations to table agents |
-| `poker-table-agent/` | Dedicated game agent that encapsulates Texas Hold’em logic and streams events back to the casino |
+| `poker-room-agent/` | Dedicated poker room agent that encapsulates the Texas Hold’em logic |
 | `agent-player-1/` | Gemini-backed player agent (defaults to `gemini-1.5-pro`) |
 | `agent-player-2/` | GPT-backed player agent (defaults to `gpt-4.1-mini`) |
 | `casino-dashboard/` | Standalone Vite/React UI that consumes the lobby REST API, manages rooms, and displays activity |
@@ -30,17 +30,17 @@ Each player folder is a standalone Lucid project, so others can clone one templa
    cd casino-agent
    bun install
    CASINO_AGENT_CARD_URL=http://localhost:4000/.well-known/agent-card.json \
-   TABLE_AGENT_AUTOSPAWN=true \
-   TABLE_AGENT_WORKDIR=../poker-table-agent \
-   TABLE_AGENT_PORT_START=4500 \
-   TABLE_AGENT_PORT_END=4600 \
+   ROOM_AGENT_AUTOSPAWN=true \
+   ROOM_AGENT_WORKDIR=../poker-room-agent \
+   ROOM_AGENT_PORT_START=4500 \
+   ROOM_AGENT_PORT_END=4600 \
    PORT=4000 bun run dev
    ```
-   The casino exposes `/entrypoints/*` plus `/ui/rooms`, `/ui/rooms/:roomId`, and room-scoped `/register`/`/start` routes. By default it also **auto-spawns** a dedicated poker-table agent per room using the local `poker-table-agent` project (one port per room). Set `TABLE_AGENT_AUTOSPAWN=false` and `DEFAULT_TABLE_AGENT_CARD_URL=<remote card>` if you prefer to attach an already-running table instead.
+   The casino exposes `/entrypoints/*` plus `/ui/rooms`, `/ui/rooms/:roomId`, and room-scoped `/register`/`/start` routes. By default it also **auto-spawns** a dedicated poker room agent per room using the local `poker-room-agent` project (one port per room). Set `ROOM_AGENT_AUTOSPAWN=false` and `DEFAULT_ROOM_AGENT_CARD_URL=<remote card>` if you prefer to attach an already-running runner instead.
 
 2. **Poker Table Agent(s) (optional)**
    ```bash
-   cd poker-table-agent
+   cd poker-room-agent
    bun install
    PORT=4500 bun run dev
    ```
@@ -52,7 +52,7 @@ Each player folder is a standalone Lucid project, so others can clone one templa
    bun install
    bun run dev
    ```
-   By default the dashboard expects the casino at `http://localhost:4000`. Override with `VITE_CASINO_URL=http://<host>:<port>` if needed, and optionally `VITE_TABLE_AGENT_CARD_URL` to pre-fill the “Create Room” form. It polls `/ui/rooms` for the lobby overview and `/ui/rooms/:roomId` for the selected room.
+   By default the dashboard expects the casino at `http://localhost:4000`. Override with `VITE_CASINO_URL=http://<host>:<port>` if needed, and optionally `VITE_ROOM_AGENT_CARD_URL` to pre-fill the “Create Room” form. It polls `/ui/rooms` for the lobby overview and `/ui/rooms/:roomId` for the selected room.
 
 4. **Player Agents**
    ```bash
@@ -69,10 +69,10 @@ Each player folder is a standalone Lucid project, so others can clone one templa
    Point the casino at each player’s agent card URL (e.g. `http://localhost:4101/.well-known/agent-card.json`). Registration is scoped to a room and can be done via the dashboard form or by calling the lobby’s `registerPlayer` entrypoint with `roomId`.
 
 5. **Create a Room & Start Hands**
-   - From the dashboard, create a room by supplying a `tableAgentCardUrl` (or rely on auto-spawn) plus a `maxSeats` value (2–10). This invokes the casino’s `createRoom` entrypoint which configures the poker-table agent.
-   - Each room receives its own poker-table endpoint (unique port) plus an agent card URL. The room list (`GET /ui/rooms`) shows both so agents can decide where to sit.
-   - Register players until all seats are filled; the casino will automatically start the room when `maxSeats` is reached. You can still use the “Room Controls” form or call `/entrypoints/startRoom/invoke` manually if you want to start early or rerun later.
-   - The poker-table agent drives gameplay via A2A, and the casino displays its events in the Activity feed.
+   - From the dashboard, create a room by supplying a `roomAgentCardUrl` (or rely on auto-spawn) plus a `maxSeats` value (2–10). This invokes the casino’s `createRoom` entrypoint which configures the poker room agent.
+   - Each room receives its own dedicated endpoint (unique port) plus an agent card URL. The room list (`GET /ui/rooms`) shows both so agents can decide where to sit.
+   - Register players until all seats are filled; the casino will automatically start the room when `maxSeats` is reached. You can still call `/entrypoints/startRoom/invoke` manually if you want to rerun later.
+   - The poker room agent drives gameplay via A2A, and the casino displays its events in the Activity feed.
 
 ## Building Your Own Player
 
@@ -82,14 +82,14 @@ Each player folder is a standalone Lucid project, so others can clone one templa
    - `act`: receives the current hand state and returns `{ action, amount?, message? }`.
 3. Deploy it and give the casino its agent card URL.
 
-Refer to `casino-agent/PROTOCOL.md` (or the copies inside each player project) for the exact Zod schemas that the casino and poker-table agents expect. Following those contracts is enough to sit in any room.
+Refer to `casino-agent/PROTOCOL.md` (or the copies inside each player project) for the exact Zod schemas that the casino and poker room agents expect. Following those contracts is enough to sit in any room.
 
-## Lobby + Table Routes
+## Lobby + Room Routes
 
 The lobby exposes:
 
 - `GET /ui/rooms` – Lobby summary (`rooms`, `defaultConfig`)
-- `POST /ui/rooms` – Create a room. Body `{ roomId?, tableId?, tableAgentCardUrl?, launchOptions?, startingStack, …, maxSeats }`
+- `POST /ui/rooms` – Create a room. Body `{ roomId?, roomAgentCardUrl?, launchOptions?, startingStack, …, maxSeats }`
 - `GET /ui/rooms/:roomId` – Live snapshot of a specific room
 - `POST /ui/rooms/:roomId/register` – Register a player to that room
 - `POST /ui/rooms/:roomId/start` – Start hands with optional overrides (`maxHands`, `smallBlind`, `bigBlind`)
@@ -100,11 +100,11 @@ Entry points mirror these capabilities:
 - `registerPlayer`
 - `startRoom`
 - `listRooms`
-- `recordGameEvent` (callback for poker-table agents)
+- `recordGameEvent` (callback for poker room agents)
 
-Responses from `listRooms`/`/ui/rooms` include each room’s `tableAgentCardUrl` and (when auto-spawned) `tableBaseUrl`, so other agents or tools can talk to a specific table endpoint directly. When creating rooms programmatically you can also supply `launchOptions.port` to pin a table to a specific port. Once a room has `maxSeats` players registered, the casino automatically invokes `startRoom` so play begins immediately.
+Responses from `listRooms`/`/ui/rooms` include each room’s `roomAgentCardUrl` and (when auto-spawned) `roomBaseUrl`, so other agents or tools can talk to a specific room endpoint directly. When creating rooms programmatically you can also supply `launchOptions.port` to pin a room agent to a specific port. Once a room has `maxSeats` players registered, the casino automatically invokes `startRoom` so play begins immediately.
 
-Each poker-table agent exposes its own card with entrypoints (`configureTable`, `registerPlayer`, `startGame`, `tableSummary`) and only communicates with the casino via A2A.
+Each poker room agent exposes its own card with entrypoints (`configureRoom`, `registerPlayer`, `startRoom`, `roomSummary`) and only communicates with the casino via A2A.
 
 ## Next Ideas
 

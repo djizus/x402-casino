@@ -7,20 +7,20 @@ import {
   BettingRound,
   RegisterPlayerInput,
   RegisterPlayerResult,
-  TableSummary,
+  RoomSummary,
   StartGameInput,
-  ConfigureTableInput,
-  TableConfig,
+  ConfigureRoomInput,
+  RoomConfig,
   actionRequestSchema,
   actionResponseSchema,
   registerPlayerResultSchema,
-  tableSummarySchema,
-  TableEvent,
+  roomSummarySchema,
+  RoomEvent,
 } from './protocol';
 import { cardToString, createDeck, drawCards, shuffleDeck } from './cards';
 import { compareHandScores, describeHand, evaluateBestHand } from './hand-evaluator';
 
-type TableStatus = 'waiting' | 'running' | 'idle' | 'error';
+type RoomStatus = 'waiting' | 'running' | 'idle' | 'error';
 const CHIP_EPSILON = 1e-6;
 
 interface RegisteredPlayer {
@@ -33,30 +33,30 @@ interface RegisteredPlayer {
   card: AgentCard;
 }
 
-export type TableRuntime = AgentRuntime & {
+export type RoomRuntime = AgentRuntime & {
   a2a?: A2ARuntime;
 };
 
-export class PokerTable {
-  private readonly runtime: TableRuntime;
-  private tableId: string;
-  private tableConfig?: TableConfig;
+export class PokerRoom {
+  private readonly runtime: RoomRuntime;
+  private roomId: string;
+  private roomConfig?: RoomConfig;
   private casinoCallback?: { card: AgentCard; eventSkill: string };
   private casinoName = 'casino-agent';
-  private status: TableStatus = 'waiting';
+  private status: RoomStatus = 'waiting';
   private players = new Map<string, RegisteredPlayer>();
   private handCount = 0;
   private lastMessage?: string;
-  private readonly eventLog: TableEvent[] = [];
+  private readonly eventLog: RoomEvent[] = [];
 
-  constructor(runtime: TableRuntime, tableId: string) {
+  constructor(runtime: RoomRuntime, roomId: string) {
     this.runtime = runtime;
-    this.tableId = tableId;
+    this.roomId = roomId;
   }
 
-  public async configure(input: ConfigureTableInput): Promise<TableSummary> {
-    this.tableId = input.tableId;
-    this.tableConfig = input.config;
+  public async configure(input: ConfigureRoomInput): Promise<RoomSummary> {
+    this.roomId = input.roomId;
+    this.roomConfig = input.config;
     this.casinoName = input.casinoName;
     const a2a = this.requireA2ARuntime();
     const casinoCard = await a2a.fetchCard(input.casinoCallback.agentCardUrl);
@@ -67,16 +67,16 @@ export class PokerTable {
     this.lastMessage = undefined;
     this.eventLog.length = 0;
 
-    await this.publishEvent('table_status', `Table ${this.tableId} configured.`, {
+    await this.publishEvent('room_status', `Room ${this.roomId} configured.`, {
       casinoName: this.casinoName,
-      config: this.tableConfig,
+      config: this.roomConfig,
     });
     return this.getSummary();
   }
 
-  public getSummary(): TableSummary {
-    const summary: TableSummary = {
-      tableId: this.tableId,
+  public getSummary(): RoomSummary {
+    const summary: RoomSummary = {
+      roomId: this.roomId,
       status: this.status,
       players: Array.from(this.players.values())
         .sort((a, b) => a.seatNumber - b.seatNumber)
@@ -90,20 +90,20 @@ export class PokerTable {
       message: this.lastMessage,
     };
 
-    return tableSummarySchema.parse(summary);
+    return roomSummarySchema.parse(summary);
   }
 
-  public getEvents(): TableEvent[] {
+  public getEvents(): RoomEvent[] {
     return [...this.eventLog];
   }
 
   public async registerPlayer(input: RegisterPlayerInput): Promise<RegisterPlayerResult> {
-    if (!this.tableConfig) {
-      throw new Error('Table is not configured.');
+    if (!this.roomConfig) {
+      throw new Error('Room is not configured.');
     }
 
-    if (this.players.size >= this.tableConfig.maxSeats) {
-      throw new Error(`Table ${this.tableId} is full (${this.tableConfig.maxSeats} seats).`);
+    if (this.players.size >= this.roomConfig.maxSeats) {
+      throw new Error(`Room ${this.roomId} is full (${this.roomConfig.maxSeats} seats).`);
     }
 
     const seatNumber = this.findSeat(input.preferredSeat);
@@ -114,7 +114,7 @@ export class PokerTable {
       this.players.has(input.playerId) ||
       Array.from(this.players.values()).some((p) => p.agentCardUrl === input.agentCardUrl)
     ) {
-      throw new Error(`Player ${input.displayName} is already at this table.`);
+      throw new Error(`Player ${input.displayName} is already registered in this room.`);
     }
 
     const player: RegisteredPlayer = {
@@ -145,9 +145,9 @@ export class PokerTable {
     return registerPlayerResultSchema.parse(result);
   }
 
-  public async startGame(overrides?: StartGameInput): Promise<TableSummary> {
-    if (!this.tableConfig) {
-      throw new Error('Table is not configured.');
+  public async startGame(overrides?: StartGameInput): Promise<RoomSummary> {
+    if (!this.roomConfig) {
+      throw new Error('Room is not configured.');
     }
     if (this.players.size < 2) {
       throw new Error('At least two players are required to start a hand.');
@@ -156,18 +156,16 @@ export class PokerTable {
       throw new Error('A hand is already running.');
     }
 
-    const config: TableConfig = {
-      ...this.tableConfig,
+    const config: RoomConfig = {
+      ...this.roomConfig,
       ...(overrides ?? {}),
-    } as TableConfig;
+    } as RoomConfig;
 
     this.status = 'running';
     this.lastMessage = undefined;
-    await this.publishEvent(
-      'hand_started',
-      `Starting session of ${config.maxHands} hand${config.maxHands === 1 ? '' : 's'} at ${this.tableId}.`,
-      { maxHands: config.maxHands },
-    );
+    await this.publishEvent('hand_started', `Starting session of ${config.maxHands} hand${config.maxHands === 1 ? '' : 's'} at ${this.roomId}.`, {
+      maxHands: config.maxHands,
+    });
 
     const initialHandCount = this.handCount;
     let bustedSeat: RegisteredPlayer | undefined;
@@ -194,7 +192,7 @@ export class PokerTable {
     } catch (error) {
       this.status = 'error';
       this.lastMessage = error instanceof Error ? error.message : 'Unknown error occurred.';
-      await this.publishEvent('table_error', this.lastMessage ?? 'Table error.');
+      await this.publishEvent('room_error', this.lastMessage ?? 'Room error.');
       throw error;
     } finally {
       if (this.status === 'running') {
@@ -221,7 +219,7 @@ export class PokerTable {
     return seat;
   }
 
-  private async playHand(config: TableConfig): Promise<void> {
+  private async playHand(config: RoomConfig): Promise<void> {
     const deck = shuffleDeck(createDeck());
     const seats = Array.from(this.players.values()).sort((a, b) => a.seatNumber - b.seatNumber);
 
@@ -266,7 +264,7 @@ export class PokerTable {
     seats: RegisteredPlayer[],
     holeCards: Map<string, Card[]>,
     communityCards: Card[],
-    config: TableConfig,
+    config: RoomConfig,
     state: {
       pot: number;
       contributions: Map<string, number>;
@@ -334,7 +332,7 @@ export class PokerTable {
           : ['check', 'fold'];
 
       const actionRequest = actionRequestSchema.parse({
-        tableId: this.tableId,
+        roomId: this.roomId,
         bettingRound,
         communityCards,
         holeCards: cards,
@@ -468,7 +466,7 @@ export class PokerTable {
       pot: number;
       folded: Set<string>;
     },
-  ): void {
+  ): Promise<void> {
     if (state.pot <= 0) {
       this.lastMessage = 'Hand completed with no chips in the pot.';
       await this.publishEvent('hand_completed', this.lastMessage);
@@ -499,7 +497,7 @@ export class PokerTable {
       .filter((entry) => entry.score);
 
     if (evaluations.length === 0) {
-      await this.publishEvent('table_error', 'No active players to settle the pot.');
+      await this.publishEvent('room_error', 'No active players to settle the pot.');
       return;
     }
 
@@ -525,12 +523,12 @@ export class PokerTable {
   }
 
   private async publishEvent(
-    eventType: TableEvent['eventType'],
+    eventType: RoomEvent['eventType'],
     message: string,
     payload?: Record<string, unknown>,
   ): Promise<void> {
-    const entry: TableEvent = {
-      tableId: this.tableId,
+    const entry: RoomEvent = {
+      roomId: this.roomId,
       eventType,
       message,
       timestamp: new Date().toISOString(),
@@ -547,7 +545,7 @@ export class PokerTable {
     try {
       await this.requireA2ARuntime().client.invoke(this.casinoCallback.card, this.casinoCallback.eventSkill, entry);
     } catch (error) {
-      console.error(`[poker-table] Failed to publish event ${eventType}:`, error);
+      console.error(`[poker-room] Failed to publish event ${eventType}:`, error);
     }
   }
 

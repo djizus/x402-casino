@@ -1,25 +1,24 @@
-# Casino Agent Protocol (Rooms + Table Agents)
+# Casino Agent Protocol (Rooms + Room Agents)
 
 The Lucid Casino architecture consists of three independent agent roles:
 
-1. **Casino Lobby Agent** – exposes entrypoints/REST routes for creating rooms, registering players, and orchestrating poker-table agents.
-2. **Poker Table Agents** – dedicated game runners that host Texas Hold’em hands and stream structured events back to the casino via A2A.
+1. **Casino Lobby Agent** – exposes entrypoints/REST routes for creating rooms, registering players, and orchestrating poker room agents.
+2. **Poker Room Agents** – dedicated game runners that host Texas Hold’em hands and stream structured events back to the casino via A2A.
 3. **Player Agents** – third-party bots that expose `signup` and `act` entrypoints.
 
-All communication happens through typed entrypoints. Schemas below use Zod notation for clarity, but any validation/runtime that matches these shapes will interoperate.
+All communication happens through typed entrypoints. Schemas below use Zod notation for clarity, but any runtime that validates the same shapes will interoperate.
 
 ---
 
 ## Player Agent Contracts
 
-Player agents need only two entrypoints, but they must honor the casino’s invitation payload.
+Player agents implement two entrypoints and must honor the lobby’s payloads.
 
 ### Signup Invitation
 
 ```ts
 const signupInvitationSchema = z.object({
   casinoName: z.string(),
-  tableId: z.string(),
   roomId: z.string(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
@@ -38,15 +37,15 @@ const playerSignupResponseSchema = z.object({
 });
 ```
 
-- `displayName` appears in the casino dashboard.
-- `actionSkill` identifies the entrypoint poker-table agents will invoke during play.
-- `buyIn` lets agents choose a stack size within the published min/max.
+- `displayName` appears throughout the lobby UI.
+- `actionSkill` is the entrypoint the poker room agent will invoke during turns.
+- `buyIn` lets the player choose a stack within the displayed min/max.
 
 ### Action Request
 
 ```ts
 const actionRequestSchema = z.object({
-  tableId: z.string(),
+  roomId: z.string(),
   bettingRound: z.enum(['preflop','flop','turn','river']),
   communityCards: z.array(cardSchema),
   holeCards: z.array(cardSchema).length(2),
@@ -56,13 +55,6 @@ const actionRequestSchema = z.object({
   playerStack: z.number().nonnegative(),
   legalActions: z.array(actionKindSchema).min(1),
 });
-
-const cardSchema = z.object({
-  rank: z.enum(['2','3','4','5','6','7','8','9','T','J','Q','K','A']),
-  suit: z.enum(['hearts','diamonds','clubs','spades']),
-});
-
-const actionKindSchema = z.enum(['fold','check','call','bet','raise','all-in']);
 ```
 
 **Response:**
@@ -79,10 +71,10 @@ const actionResponseSchema = z.object({
 
 ## Casino Lobby Entry Points
 
-Operators (or automation) interact with the casino lobby agent through these entrypoints/REST routes:
+Operators (or automation) interact with the lobby via these entrypoints/REST routes:
 
 ```ts
-const tableConfigSchema = z.object({
+const roomConfigSchema = z.object({
   startingStack: z.number().positive(),
   smallBlind: z.number().positive(),
   bigBlind: z.number().positive(),
@@ -94,22 +86,21 @@ const tableConfigSchema = z.object({
 
 const createRoomInputSchema = z.object({
   roomId: z.string().optional(),
-  tableId: z.string().optional(),
-  tableAgentCardUrl: z.string().url().optional(),
-  tableAgentSkills: z
+  roomAgentCardUrl: z.string().url().optional(),
+  roomAgentSkills: z
     .object({
-      configure: z.string().default('configureTable'),
+      configure: z.string().default('configureRoom'),
       register: z.string().default('registerPlayer'),
-      start: z.string().default('startGame'),
-      summary: z.string().default('tableSummary'),
+      start: z.string().default('startRoom'),
+      summary: z.string().default('roomSummary'),
     })
     .default({
-      configure: 'configureTable',
+      configure: 'configureRoom',
       register: 'registerPlayer',
-      start: 'startGame',
-      summary: 'tableSummary',
+      start: 'startRoom',
+      summary: 'roomSummary',
     }),
-  config: tableConfigSchema,
+  config: roomConfigSchema,
   launchOptions: z
     .object({
       port: z.number().int().positive().optional(),
@@ -137,24 +128,24 @@ const startRoomInputSchema = z.object({
 });
 ```
 
-- `createRoom` configures a poker-table agent (by card URL) and stores the resulting room metadata.
-- `registerPlayer` performs the signup handshake with a player agent, then forwards the seating request to the appropriate table agent.
-- `startRoom` proxies to the table agent’s `startGame` entrypoint with optional overrides.
-- `listRooms` returns lobby summaries, while `recordGameEvent` ingests structured telemetry from table agents.
+- `createRoom` configures (or auto-spawns) a poker room agent and stores the resulting room metadata.
+- `registerPlayer` performs the signup handshake with a player agent, then forwards the seating request to the targeted room agent.
+- `startRoom` proxies to the room agent’s `startRoom` entrypoint with optional overrides.
+- `listRooms` returns lobby summaries, while `recordGameEvent` ingests structured telemetry from room agents.
 
-When `config.maxSeats` players are registered (and the table isn’t already running), the lobby automatically starts that room. Rooms created via the embedded launcher can also specify `launchOptions.port` to pin the spawned poker-table agent to a stable TCP port. Room summaries/snapshots expose each table’s `tableAgentCardUrl` and (when known) `tableBaseUrl`, so other agents can join a specific room by hitting that poker-table endpoint directly.
+When `config.maxSeats` players are registered (and the room isn’t already running) the lobby automatically starts that room. Rooms created via the embedded launcher can also specify `launchOptions.port` to pin the spawned poker room agent to a stable TCP port. Room summaries/snapshots expose each room’s `roomAgentCardUrl` and, when known, `roomBaseUrl`, so other agents can connect to a specific room directly.
 
 ---
 
-## Poker Table Agent Contracts
+## Poker Room Agent Contracts
 
-Poker-table agents are standalone Lucid agents. They expose:
+Poker room agents are standalone Lucid agents. They expose:
 
 ```ts
-const configureTableInputSchema = z.object({
-  tableId: z.string(),
+const configureRoomInputSchema = z.object({
+  roomId: z.string(),
   casinoName: z.string(),
-  config: tableConfigSchema,
+  config: roomConfigSchema,
   casinoCallback: z.object({
     agentCardUrl: z.string().url(),
     eventSkill: z.string().min(1),
@@ -170,16 +161,16 @@ const registerPlayerInputSchema = z.object({
   preferredSeat: z.number().int().nonnegative().optional(),
 });
 
-const tableEventSchema = z.object({
-  tableId: z.string(),
+const roomEventSchema = z.object({
+  roomId: z.string(),
   eventType: z.enum([
     'player_registered',
     'hand_started',
     'action_taken',
     'hand_completed',
     'player_busted',
-    'table_error',
-    'table_status',
+    'room_error',
+    'room_status',
   ]),
   message: z.string(),
   timestamp: z.string(),
@@ -187,9 +178,9 @@ const tableEventSchema = z.object({
 });
 ```
 
-- `configureTable` resets the table’s state and tells it where to publish `tableEvent` notifications (the casino’s `recordGameEvent` entrypoint).
-- `registerPlayer` seats a player that the casino already authenticated.
-- `startGame` runs one or more hands and uses the `actionRequest`/`actionResponse` contract for each player decision.
-- `tableSummary` returns the table’s status, players, and latest message for dashboards.
+- `configureRoom` resets the engine and tells it where to publish `roomEvent` notifications (the lobby’s `recordGameEvent` entrypoint).
+- `registerPlayer` seats a player that the lobby already authenticated.
+- `startRoom` runs one or more hands and uses the `actionRequest`/`actionResponse` contract for each decision.
+- `roomSummary` returns the room’s status, players, and latest message for dashboards.
 
-Poker-table agents **never** import casino or player code—they only adhere to these JSON contracts and communicate via A2A entrypoints.
+Poker room agents **never** import casino or player code—they only adhere to these JSON contracts and communicate via A2A entrypoints.

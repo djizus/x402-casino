@@ -10,70 +10,69 @@ import {
   RoomSnapshot,
   RoomSummary,
   StartRoomInput,
-  TableConfig,
-  TableEvent,
-  TableSummary,
+  RoomConfig,
+  RoomEvent,
+  RoomState as RoomGameState,
   playerSignupResponseSchema,
   registerPlayerResultSchema,
   roomSnapshotSchema,
   roomSummarySchema,
   signupInvitationSchema,
-  tableEventSchema,
-  tableSummarySchema,
+  roomEventSchema,
+  roomStateSchema,
 } from './protocol';
-import { TableLauncher } from './table-launcher';
+import { RoomLauncher } from './room-launcher';
 
 export type CasinoRuntime = AgentRuntime & {
   a2a?: A2ARuntime;
 };
 
-type TableAgentSkills = {
+type RoomAgentSkills = {
   configure: string;
   register: string;
   start: string;
   summary: string;
 };
 
-interface TableAgentHandle {
+interface RoomAgentHandle {
   cardUrl: string;
   card: AgentCard;
-  skills: TableAgentSkills;
+  skills: RoomAgentSkills;
 }
 
-interface TableProcessHandle {
+interface RoomProcessHandle {
   stop: () => void;
   baseUrl: string;
 }
 
-interface RoomState {
+interface ManagedRoom {
   roomId: string;
-  tableId: string;
   gameType: 'poker';
-  config: TableConfig;
-  tableAgent: TableAgentHandle;
-  tableBaseUrl?: string;
-  tableProcess?: TableProcessHandle;
-  summary?: TableSummary;
-  events: TableEvent[];
+  config: RoomConfig;
+  roomAgent: RoomAgentHandle;
+  roomBaseUrl?: string;
+  roomProcess?: RoomProcessHandle;
+  summary?: RoomGameState;
+  events: RoomEvent[];
 }
 
 export class RoomManager {
-  private readonly rooms = new Map<string, RoomState>();
+  private readonly rooms = new Map<string, ManagedRoom>();
   private readonly runtime: CasinoRuntime;
   private readonly casinoName: string;
   private readonly callback: { agentCardUrl: string; eventSkill: string };
-  private readonly tableLauncher?: TableLauncher;
+  private readonly roomLauncher?: RoomLauncher;
 
   constructor(
     runtime: CasinoRuntime,
     casinoName: string,
     callback: { agentCardUrl: string; eventSkill: string },
-    options?: { tableLauncher?: TableLauncher },
+    options?: { roomLauncher?: RoomLauncher },
   ) {
     this.runtime = runtime;
     this.casinoName = casinoName;
     this.callback = callback;
-    this.tableLauncher = options?.tableLauncher;
+    this.roomLauncher = options?.roomLauncher;
   }
 
   public listRooms(): RoomSummary[] {
@@ -87,11 +86,11 @@ export class RoomManager {
           await this.refreshSummary(room);
         } catch (error) {
           room.summary = {
-            tableId: room.tableId,
+            roomId: room.roomId,
             status: 'error',
             handCount: room.summary?.handCount ?? 0,
             players: room.summary?.players ?? [],
-            message: error instanceof Error ? error.message : 'Failed to fetch table summary.',
+            message: error instanceof Error ? error.message : 'Failed to fetch room summary.',
           };
         }
       }),
@@ -100,49 +99,48 @@ export class RoomManager {
 
   public async createRoom(input: CreateRoomInput): Promise<RoomSnapshot> {
     const roomId = input.roomId ?? `room-${randomUUID()}`;
-    const tableId = input.tableId ?? roomId;
     if (this.rooms.has(roomId)) {
       throw new Error(`Room ${roomId} already exists.`);
     }
 
     const a2a = this.ensureA2A();
-    let tableCardUrl = input.tableAgentCardUrl;
-    let tableBaseUrl: string | undefined;
-    let tableProcess: TableProcessHandle | undefined;
+    let roomAgentCardUrl = input.roomAgentCardUrl;
+    let roomBaseUrl: string | undefined;
+    let roomProcess: RoomProcessHandle | undefined;
 
-    if (!tableCardUrl) {
-      if (!this.tableLauncher) {
-        throw new Error('tableAgentCardUrl is required when no table launcher is configured.');
+    if (!roomAgentCardUrl) {
+      if (!this.roomLauncher) {
+        throw new Error('roomAgentCardUrl is required when no room launcher is configured.');
       }
-      const launched = await this.tableLauncher.launch(roomId, tableId, { port: input.launchOptions?.port });
-      tableCardUrl = launched.cardUrl;
-      tableBaseUrl = launched.baseUrl;
-      tableProcess = {
+      const launched = await this.roomLauncher.launch(roomId, { port: input.launchOptions?.port });
+      roomAgentCardUrl = launched.cardUrl;
+      roomBaseUrl = launched.baseUrl;
+      roomProcess = {
         stop: launched.stop,
         baseUrl: launched.baseUrl,
       };
     }
 
-    if (!tableBaseUrl) {
+    if (!roomBaseUrl) {
       try {
-        const parsed = new URL(tableCardUrl);
-        tableBaseUrl = `${parsed.protocol}//${parsed.host}`;
+        const parsed = new URL(roomAgentCardUrl);
+        roomBaseUrl = `${parsed.protocol}//${parsed.host}`;
       } catch {
         // best effort
       }
     }
 
-    const tableCard = await a2a.fetchCard(tableCardUrl);
-    const skills: TableAgentSkills = {
-      configure: input.tableAgentSkills.configure,
-      register: input.tableAgentSkills.register,
-      start: input.tableAgentSkills.start,
-      summary: input.tableAgentSkills.summary,
+    const tableCard = await a2a.fetchCard(roomAgentCardUrl);
+    const skills: RoomAgentSkills = {
+      configure: input.roomAgentSkills.configure,
+      register: input.roomAgentSkills.register,
+      start: input.roomAgentSkills.start,
+      summary: input.roomAgentSkills.summary,
     };
 
     try {
       await a2a.client.invoke(tableCard, skills.configure, {
-        tableId,
+        roomId,
         casinoName: this.casinoName,
         config: input.config,
         casinoCallback: {
@@ -151,22 +149,21 @@ export class RoomManager {
         },
       });
     } catch (error) {
-      tableProcess?.stop();
+      roomProcess?.stop();
       throw error;
     }
 
-    const room: RoomState = {
+    const room: ManagedRoom = {
       roomId,
-      tableId,
       gameType: 'poker',
       config: input.config,
-      tableAgent: {
-        cardUrl: tableCardUrl,
+      roomAgent: {
+        cardUrl: roomAgentCardUrl,
         card: tableCard,
         skills,
       },
-      tableBaseUrl,
-      tableProcess,
+      roomBaseUrl,
+      roomProcess,
       summary: undefined,
       events: [],
     };
@@ -174,7 +171,7 @@ export class RoomManager {
     try {
       await this.refreshSummary(room);
     } catch (error) {
-      tableProcess?.stop();
+      roomProcess?.stop();
       throw error;
     }
     this.rooms.set(roomId, room);
@@ -188,7 +185,6 @@ export class RoomManager {
     const playerCard = await a2a.fetchCard(input.agentCardUrl);
     const invitation = signupInvitationSchema.parse({
       casinoName: this.casinoName,
-      tableId: room.tableId,
       roomId: room.roomId,
       minBuyIn: room.config.minBuyIn,
       maxBuyIn: room.config.maxBuyIn,
@@ -211,7 +207,7 @@ export class RoomManager {
       preferredSeat: input.preferredSeat,
     };
 
-    const result = await a2a.client.invoke(room.tableAgent.card, room.tableAgent.skills.register, registerPayload);
+    const result = await a2a.client.invoke(room.roomAgent.card, room.roomAgent.skills.register, registerPayload);
     const parsed = registerPlayerResultSchema.parse({
       roomId: room.roomId,
       ...(result.output ?? {}),
@@ -222,15 +218,15 @@ export class RoomManager {
     return parsed;
   }
 
-  public async startRoom(input: StartRoomInput): Promise<TableSummary> {
+  public async startRoom(input: StartRoomInput): Promise<RoomGameState> {
     const room = this.requireRoom(input.roomId);
     const a2a = this.ensureA2A();
 
     const payload = {
       ...(input.overrides ?? {}),
     };
-    const result = await a2a.client.invoke(room.tableAgent.card, room.tableAgent.skills.start, payload);
-    const summary = tableSummarySchema.parse(result.output ?? {});
+    const result = await a2a.client.invoke(room.roomAgent.card, room.roomAgent.skills.start, payload);
+    const summary = roomStateSchema.parse(result.output ?? {});
     room.summary = summary;
     return summary;
   }
@@ -241,9 +237,9 @@ export class RoomManager {
     return this.toSnapshot(room);
   }
 
-  public async recordEvent(event: TableEvent): Promise<void> {
-    const parsed = tableEventSchema.parse(event);
-    const room = this.findRoomByTableId(parsed.tableId);
+  public async recordEvent(event: RoomEvent): Promise<void> {
+    const parsed = roomEventSchema.parse(event);
+    const room = this.findRoomById(parsed.roomId);
     if (!room) {
       return;
     }
@@ -258,20 +254,19 @@ export class RoomManager {
     return this.toSnapshot(room);
   }
 
-  private clampBuyIn(value: number, config: TableConfig): number {
+  private clampBuyIn(value: number, config: RoomConfig): number {
     if (!Number.isFinite(value)) {
       return config.startingStack;
     }
     return Math.min(Math.max(value, config.minBuyIn), config.maxBuyIn);
   }
 
-  private toSummary(room: RoomState): RoomSummary {
+  private toSummary(room: ManagedRoom): RoomSummary {
     const summary: RoomSummary = {
       roomId: room.roomId,
-      tableId: room.tableId,
       gameType: room.gameType,
-      tableAgentCardUrl: room.tableAgent.cardUrl,
-      tableBaseUrl: room.tableBaseUrl,
+      roomAgentCardUrl: room.roomAgent.cardUrl,
+      roomBaseUrl: room.roomBaseUrl,
       status: room.summary?.status ?? 'waiting',
       handCount: room.summary?.handCount ?? 0,
       playerCount: room.summary?.players.length ?? 0,
@@ -280,19 +275,19 @@ export class RoomManager {
     return roomSummarySchema.parse(summary);
   }
 
-  private toSnapshot(room: RoomState): RoomSnapshot {
+  private toSnapshot(room: ManagedRoom): RoomSnapshot {
     const snapshot: RoomSnapshot = {
       roomId: room.roomId,
       config: room.config,
       summary: room.summary,
-      tableAgentCardUrl: room.tableAgent.cardUrl,
-      tableBaseUrl: room.tableBaseUrl,
+      roomAgentCardUrl: room.roomAgent.cardUrl,
+      roomBaseUrl: room.roomBaseUrl,
       events: [...room.events],
     };
     return roomSnapshotSchema.parse(snapshot);
   }
 
-  private async maybeAutoStart(room: RoomState): Promise<void> {
+  private async maybeAutoStart(room: ManagedRoom): Promise<void> {
     if (!room.config.maxSeats) {
       return;
     }
@@ -315,7 +310,7 @@ export class RoomManager {
 
   public async shutdown(): Promise<void> {
     for (const room of this.rooms.values()) {
-      room.tableProcess?.stop();
+      room.roomProcess?.stop();
     }
   }
 
@@ -326,7 +321,7 @@ export class RoomManager {
     return this.runtime.a2a;
   }
 
-  private requireRoom(roomId: string): RoomState {
+  private requireRoom(roomId: string): ManagedRoom {
     const room = this.rooms.get(roomId);
     if (!room) {
       throw new Error(`Room ${roomId} not found.`);
@@ -334,13 +329,13 @@ export class RoomManager {
     return room;
   }
 
-  private findRoomByTableId(tableId: string): RoomState | undefined {
-    return Array.from(this.rooms.values()).find((room) => room.tableId === tableId);
+  private findRoomById(roomId: string): ManagedRoom | undefined {
+    return Array.from(this.rooms.values()).find((room) => room.roomId === roomId);
   }
 
-  private async refreshSummary(room: RoomState): Promise<void> {
+  private async refreshSummary(room: ManagedRoom): Promise<void> {
     const a2a = this.ensureA2A();
-    const result = await a2a.client.invoke(room.tableAgent.card, room.tableAgent.skills.summary, {});
-    room.summary = tableSummarySchema.parse(result.output ?? {});
+    const result = await a2a.client.invoke(room.roomAgent.card, room.roomAgent.skills.summary, {});
+    room.summary = roomStateSchema.parse(result.output ?? {});
   }
 }

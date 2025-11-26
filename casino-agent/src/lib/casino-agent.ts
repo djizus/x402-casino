@@ -11,18 +11,19 @@ import {
   CreateRoomInput,
   RegisterPlayerInput,
   StartRoomInput,
+  RoomConfig,
   createRoomInputSchema,
   registerPlayerInputSchema,
   registerPlayerResultSchema,
   roomSnapshotSchema,
   startRoomInputSchema,
-  tableConfigSchema,
-  tableEventSchema,
-  tableSummarySchema,
+  roomConfigSchema,
+  roomEventSchema,
+  roomStateSchema,
   casinoStateSchema,
 } from './protocol';
 import { RoomManager, type CasinoRuntime } from './room-manager';
-import { TableLauncher } from './table-launcher';
+import { RoomLauncher } from './room-launcher';
 
 const toNumber = (value: string | undefined, fallback: number): number => {
   if (!value) {
@@ -30,6 +31,26 @@ const toNumber = (value: string | undefined, fallback: number): number => {
   }
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toConfigNumber = (value: unknown, fallback: number): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return fallback;
+};
+
+const clampSeats = (value: number): number => {
+  const rounded = Math.round(value);
+  return Math.min(Math.max(rounded, 2), 10);
+};
+
+const normalizeOptionalUrl = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 };
 
 const parseArgs = (value: string | undefined, fallback: string[]): string[] => {
@@ -49,9 +70,9 @@ if (!casinoCardUrl) {
   throw new Error('CASINO_AGENT_CARD_URL must be set so table agents can send events back to the casino.');
 }
 
-const defaultTableAgentCardUrl = process.env.DEFAULT_TABLE_AGENT_CARD_URL;
+const defaultRoomAgentCardUrl = process.env.DEFAULT_ROOM_AGENT_CARD_URL;
 
-const defaultConfig = tableConfigSchema.parse({
+const defaultConfig = roomConfigSchema.parse({
   startingStack: toNumber(process.env.STARTING_STACK, 1),
   smallBlind: toNumber(process.env.SMALL_BLIND, 0.1),
   bigBlind: toNumber(process.env.BIG_BLIND, 1),
@@ -62,18 +83,20 @@ const defaultConfig = tableConfigSchema.parse({
 });
 
 const embeddedWorkdir =
-  process.env.TABLE_AGENT_WORKDIR ?? resolve(new URL('../../../poker-table-agent', import.meta.url).pathname);
-const enableTableLauncher = process.env.TABLE_AGENT_AUTOSPAWN !== 'false';
-const tableAgentBin = process.env.TABLE_AGENT_BIN ?? 'bun';
-const tableAgentArgs = parseArgs(process.env.TABLE_AGENT_ARGS, ['run', 'src/index.ts']);
-const portRangeStart = Number.parseInt(process.env.TABLE_AGENT_PORT_START ?? '4500', 10);
-const portRangeEnd = Number.parseInt(process.env.TABLE_AGENT_PORT_END ?? '4600', 10);
+  process.env.ROOM_AGENT_WORKDIR ??
+  process.env.TABLE_AGENT_WORKDIR ??
+  resolve(new URL('../../../poker-room-agent', import.meta.url).pathname);
+const enableRoomLauncher = (process.env.ROOM_AGENT_AUTOSPAWN ?? process.env.TABLE_AGENT_AUTOSPAWN) !== 'false';
+const roomAgentBin = process.env.ROOM_AGENT_BIN ?? process.env.TABLE_AGENT_BIN ?? 'bun';
+const roomAgentArgs = parseArgs(process.env.ROOM_AGENT_ARGS ?? process.env.TABLE_AGENT_ARGS, ['run', 'src/index.ts']);
+const portRangeStart = Number.parseInt(process.env.ROOM_AGENT_PORT_START ?? process.env.TABLE_AGENT_PORT_START ?? '4500', 10);
+const portRangeEnd = Number.parseInt(process.env.ROOM_AGENT_PORT_END ?? process.env.TABLE_AGENT_PORT_END ?? '4600', 10);
 
-const tableLauncher = enableTableLauncher
-  ? new TableLauncher({
+const roomLauncher = enableRoomLauncher
+  ? new RoomLauncher({
       workdir: embeddedWorkdir,
-      bin: tableAgentBin,
-      args: tableAgentArgs,
+      bin: roomAgentBin,
+      args: roomAgentArgs,
       portRangeStart,
       portRangeEnd,
     })
@@ -101,7 +124,7 @@ const roomManager = new RoomManager(
     eventSkill: 'recordGameEvent',
   },
   {
-    tableLauncher,
+    roomLauncher,
   },
 );
 
@@ -135,6 +158,17 @@ const fetchLobbyState = async (): Promise<CasinoState> => {
   return listRooms();
 };
 
+const buildConfigFromPayload = (payload: any): RoomConfig =>
+  roomConfigSchema.parse({
+    startingStack: toConfigNumber(payload.startingStack, defaultConfig.startingStack),
+    smallBlind: toConfigNumber(payload.smallBlind, defaultConfig.smallBlind),
+    bigBlind: toConfigNumber(payload.bigBlind, defaultConfig.bigBlind),
+    minBuyIn: toConfigNumber(payload.minBuyIn, defaultConfig.minBuyIn),
+    maxBuyIn: toConfigNumber(payload.maxBuyIn, defaultConfig.maxBuyIn),
+    maxHands: Math.max(1, Math.round(toConfigNumber(payload.maxHands, defaultConfig.maxHands))),
+    maxSeats: clampSeats(toConfigNumber(payload.maxSeats, defaultConfig.maxSeats)),
+  });
+
 addEntrypoint({
   key: 'createRoom',
   description: 'Create a new poker room and bind a table agent to it.',
@@ -143,7 +177,7 @@ addEntrypoint({
   handler: async (ctx) => {
     const room = await roomManager.createRoom({
       ...ctx.input,
-      tableAgentCardUrl: ctx.input.tableAgentCardUrl ?? defaultTableAgentCardUrl,
+      roomAgentCardUrl: ctx.input.roomAgentCardUrl ?? defaultRoomAgentCardUrl,
     });
     return { output: room };
   },
@@ -164,7 +198,7 @@ addEntrypoint({
   key: 'startRoom',
   description: 'Start one or more hands for a specific room.',
   input: startRoomInputSchema,
-  output: tableSummarySchema,
+  output: roomStateSchema,
   handler: async (ctx) => {
     const summary = await roomManager.startRoom(ctx.input);
     return { output: summary };
@@ -174,7 +208,7 @@ addEntrypoint({
 addEntrypoint({
   key: 'recordGameEvent',
   description: 'Receive activity emitted by poker-table agents.',
-  input: tableEventSchema,
+  input: roomEventSchema,
   handler: async (ctx) => {
     await roomManager.recordEvent(ctx.input);
     return { output: { ok: true } };
@@ -201,14 +235,28 @@ app.get('/ui/rooms', async (c) => {
 app.post('/ui/rooms', async (c) => {
   try {
     const payload = await c.req.json();
-    const parsed = createRoomInputSchema.parse({
-      config: defaultConfig,
-      ...payload,
-    });
-    const room = await roomManager.createRoom({
-      ...parsed,
-      tableAgentCardUrl: parsed.tableAgentCardUrl ?? defaultTableAgentCardUrl,
-    });
+    const config =
+      typeof payload.config === 'object' && payload.config
+        ? roomConfigSchema.parse({
+            ...defaultConfig,
+            ...(payload.config ?? {}),
+          })
+        : buildConfigFromPayload(payload);
+    const launchOptions =
+      payload.launchOptions ?? (payload.roomPort ? { port: Number(payload.roomPort) } : undefined);
+    const explicitCard = normalizeOptionalUrl(payload.roomAgentCardUrl);
+    const baseInput: Record<string, unknown> = {
+      roomId: typeof payload.roomId === 'string' && payload.roomId.trim() ? payload.roomId.trim() : undefined,
+      roomAgentSkills: payload.roomAgentSkills,
+      config,
+      launchOptions,
+    };
+    const resolvedCard = explicitCard ?? defaultRoomAgentCardUrl;
+    if (resolvedCard) {
+      baseInput.roomAgentCardUrl = resolvedCard;
+    }
+    const parsed = createRoomInputSchema.parse(baseInput);
+    const room = await roomManager.createRoom(parsed);
     return c.json({ ok: true, room });
   } catch (error) {
     return c.json(

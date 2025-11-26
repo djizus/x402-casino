@@ -19,7 +19,7 @@ export const actionKindSchema = z.enum(['fold', 'check', 'call', 'bet', 'raise',
 export type ActionKind = z.infer<typeof actionKindSchema>;
 
 export const actionRequestSchema = z.object({
-  tableId: z.string(),
+  roomId: z.string(),
   bettingRound: bettingRoundSchema,
   communityCards: z.array(cardSchema),
   holeCards: z.array(cardSchema).length(2),
@@ -38,7 +38,7 @@ export const actionResponseSchema = z.object({
 });
 export type ActionResponse = z.infer<typeof actionResponseSchema>;
 
-export const tableConfigSchema = z.object({
+export const roomConfigSchema = z.object({
   startingStack: z.number().positive(),
   smallBlind: z.number().positive(),
   bigBlind: z.number().positive(),
@@ -47,7 +47,7 @@ export const tableConfigSchema = z.object({
   maxHands: z.number().int().positive(),
   maxSeats: z.number().int().min(2).max(10),
 });
-export type TableConfig = z.infer<typeof tableConfigSchema>;
+export type RoomConfig = z.infer<typeof roomConfigSchema>;
 
 export const casinoCallbackSchema = z.object({
   agentCardUrl: z.string().url(),
@@ -55,13 +55,13 @@ export const casinoCallbackSchema = z.object({
 });
 export type CasinoCallback = z.infer<typeof casinoCallbackSchema>;
 
-export const configureTableInputSchema = z.object({
-  tableId: z.string().min(1),
+export const configureRoomInputSchema = z.object({
+  roomId: z.string().min(1),
   casinoName: z.string().min(1),
-  config: tableConfigSchema,
+  config: roomConfigSchema,
   casinoCallback: casinoCallbackSchema,
 });
-export type ConfigureTableInput = z.infer<typeof configureTableInputSchema>;
+export type ConfigureRoomInput = z.infer<typeof configureRoomInputSchema>;
 
 export const playerSeatSchema = z.object({
   playerId: z.string(),
@@ -71,14 +71,14 @@ export const playerSeatSchema = z.object({
 });
 export type PlayerSeatSummary = z.infer<typeof playerSeatSchema>;
 
-export const tableSummarySchema = z.object({
-  tableId: z.string(),
+export const roomSummarySchema = z.object({
+  roomId: z.string(),
   status: z.enum(['waiting', 'running', 'idle', 'error']),
   handCount: z.number().int().nonnegative(),
   players: z.array(playerSeatSchema),
   message: z.string().optional(),
 });
-export type TableSummary = z.infer<typeof tableSummarySchema>;
+export type RoomSummary = z.infer<typeof roomSummarySchema>;
 
 export const registerPlayerInputSchema = z.object({
   playerId: z.string(),
@@ -108,19 +108,19 @@ export const startGameInputSchema = z
   .default({});
 export type StartGameInput = z.infer<typeof startGameInputSchema>;
 
-export const tableEventSchema = z.object({
-  tableId: z.string(),
+export const roomEventSchema = z.object({
+  roomId: z.string(),
   eventType: z.enum([
     'player_registered',
     'hand_started',
     'action_taken',
     'hand_completed',
     'player_busted',
-    'table_error',
-    'table_status',
+    'room_error',
+    'room_status',
   ]),
   message: z.string(),
   timestamp: z.string(),
   payload: z.record(z.string(), z.any()).optional(),
 });
-export type TableEvent = z.infer<typeof tableEventSchema>;
+export type RoomEvent = z.infer<typeof roomEventSchema>;

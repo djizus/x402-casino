@@ -7,7 +7,7 @@ type LaunchResult = {
   stop: () => void;
 };
 
-type TableLauncherOptions = {
+type RoomLauncherOptions = {
   workdir: string;
   bin: string;
   args: string[];
@@ -17,7 +17,7 @@ type TableLauncherOptions = {
 
 const wait = (ms: number) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 
-export class TableLauncher {
+export class RoomLauncher {
   private readonly workdir: string;
   private readonly bin: string;
   private readonly args: string[];
@@ -26,7 +26,7 @@ export class TableLauncher {
   private nextPort: number;
   private readonly activePorts = new Set<number>();
 
-  constructor(options: TableLauncherOptions) {
+  constructor(options: RoomLauncherOptions) {
     this.workdir = resolve(options.workdir);
     this.bin = options.bin;
     this.args = options.args;
@@ -35,13 +35,13 @@ export class TableLauncher {
     this.nextPort = this.portStart;
   }
 
-  public async launch(roomId: string, tableId: string, overrides?: { port?: number }): Promise<LaunchResult> {
+  public async launch(roomId: string, overrides?: { port?: number }): Promise<LaunchResult> {
     const port = overrides?.port ?? this.allocatePort();
     const env = {
       ...process.env,
       PORT: String(port),
-      TABLE_ID: tableId,
-      TABLE_AGENT_NAME: `${tableId}`,
+      ROOM_ID: roomId,
+      ROOM_AGENT_NAME: `${roomId}`,
     };
 
     const child = Bun.spawn({
@@ -88,7 +88,7 @@ export class TableLauncher {
         candidate = this.portStart;
       }
       if (attempts > this.portEnd - this.portStart + 1) {
-        throw new Error('No free ports available for poker table agents.');
+        throw new Error('No free ports available for poker room agents.');
       }
     }
     this.activePorts.add(candidate);
@@ -117,6 +117,6 @@ export class TableLauncher {
         // swallow until timeout
       }
     }
-    throw new Error(`Table agent at port ${port} failed to start.`);
+    throw new Error(`Room agent at port ${port} failed to start.`);
   }
 }

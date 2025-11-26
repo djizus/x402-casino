@@ -1,10 +1,4 @@
-import type {
-  CreateRoomPayload,
-  LobbyState,
-  RegisterPayload,
-  RoomSnapshot,
-  StartRoomPayload,
-} from './types';
+import type { CreateRoomPayload, LobbyState, RegisterPayload, RoomSnapshot } from './types';
 
 const BASE_URL = import.meta.env.VITE_CASINO_URL ?? 'http://localhost:4000';
 
@@ -34,8 +28,6 @@ export const fetchRoomSnapshot = async (roomId: string): Promise<RoomSnapshot> =
 export const createRoom = async (input: CreateRoomPayload) => {
   const body: Record<string, unknown> = {
     roomId: input.roomId || undefined,
-    tableId: input.tableId || undefined,
-    tableAgentCardUrl: input.tableAgentCardUrl || undefined,
     startingStack: input.startingStack,
     smallBlind: input.smallBlind,
     bigBlind: input.bigBlind,
@@ -44,9 +36,6 @@ export const createRoom = async (input: CreateRoomPayload) => {
     maxHands: input.maxHands,
     maxSeats: input.maxSeats,
   };
-  if (typeof input.tablePort === 'number') {
-    body.launchOptions = { port: input.tablePort };
-  }
 
   const res = await fetch(`${BASE_URL}/ui/rooms`, {
     method: 'POST',
@@ -59,15 +48,6 @@ export const createRoom = async (input: CreateRoomPayload) => {
 
 export const registerPlayer = async (roomId: string, input: RegisterPayload) => {
   const res = await fetch(`${BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  return toJson(res);
-};
-
-export const startRoom = async (roomId: string, input: StartRoomPayload) => {
-  const res = await fetch(`${BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),

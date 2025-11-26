@@ -5,15 +5,15 @@ export type PlayerSeat = {
   stack: number;
 };
 
-export type TableSummary = {
-  tableId: string;
+export type RoomStateSummary = {
+  roomId: string;
   status: 'waiting' | 'running' | 'idle' | 'error';
   players: PlayerSeat[];
   handCount: number;
   message?: string;
 };
 
-export type TableConfig = {
+export type RoomConfig = {
   startingStack: number;
   smallBlind: number;
   bigBlind: number;
@@ -23,16 +23,16 @@ export type TableConfig = {
   maxSeats: number;
 };
 
-export type TableEvent = {
-  tableId: string;
+export type RoomEvent = {
+  roomId: string;
   eventType:
     | 'player_registered'
     | 'hand_started'
     | 'action_taken'
     | 'hand_completed'
     | 'player_busted'
-    | 'table_error'
-    | 'table_status';
+    | 'room_error'
+    | 'room_status';
   message: string;
   timestamp: string;
   payload?: Record<string, unknown>;
@@ -40,10 +40,9 @@ export type TableEvent = {
 
 export type RoomSummary = {
   roomId: string;
-  tableId: string;
   gameType: string;
-  tableAgentCardUrl: string;
-  tableBaseUrl?: string;
+  roomAgentCardUrl: string;
+  roomBaseUrl?: string;
   status: 'waiting' | 'running' | 'idle' | 'error';
   handCount: number;
   playerCount: number;
@@ -52,23 +51,20 @@ export type RoomSummary = {
 
 export type RoomSnapshot = {
   roomId: string;
-  config: TableConfig;
-  summary?: TableSummary;
-  tableAgentCardUrl: string;
-  tableBaseUrl?: string;
-  events: TableEvent[];
+  config: RoomConfig;
+  summary?: RoomStateSummary;
+  roomAgentCardUrl: string;
+  roomBaseUrl?: string;
+  events: RoomEvent[];
 };
 
 export type LobbyState = {
   rooms: RoomSummary[];
-  defaultConfig: TableConfig;
+  defaultConfig: RoomConfig;
 };
 
 export type CreateRoomPayload = {
   roomId?: string;
-  tableId?: string;
-  tableAgentCardUrl?: string;
-  tablePort?: number;
   startingStack: number;
   smallBlind: number;
   bigBlind: number;
@@ -83,10 +79,4 @@ export type RegisterPayload = {
   signupSkill?: string;
   actionSkill?: string;
   preferredSeat?: number;
-};
-
-export type StartRoomPayload = {
-  maxHands?: number;
-  smallBlind?: number;
-  bigBlind?: number;
 };

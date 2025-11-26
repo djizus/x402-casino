@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const tableConfigSchema = z.object({
+export const roomConfigSchema = z.object({
   startingStack: z.number().positive().default(1),
   smallBlind: z.number().positive().default(0.1),
   bigBlind: z.number().positive().default(1),
@@ -9,11 +9,10 @@ export const tableConfigSchema = z.object({
   maxHands: z.number().int().positive().default(1),
   maxSeats: z.number().int().min(2).max(10).default(6),
 });
-export type TableConfig = z.infer<typeof tableConfigSchema>;
+export type RoomConfig = z.infer<typeof roomConfigSchema>;
 
 export const signupInvitationSchema = z.object({
   casinoName: z.string(),
-  tableId: z.string(),
   roomId: z.string(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
@@ -37,38 +36,37 @@ export const playerSeatSchema = z.object({
 });
 export type PlayerSeat = z.infer<typeof playerSeatSchema>;
 
-export const tableSummarySchema = z.object({
-  tableId: z.string(),
+export const roomStateSchema = z.object({
+  roomId: z.string(),
   status: z.enum(['waiting', 'running', 'idle', 'error']),
   handCount: z.number().int().nonnegative(),
   players: z.array(playerSeatSchema),
   message: z.string().optional(),
 });
-export type TableSummary = z.infer<typeof tableSummarySchema>;
+export type RoomState = z.infer<typeof roomStateSchema>;
 
-export const tableEventSchema = z.object({
-  tableId: z.string(),
+export const roomEventSchema = z.object({
+  roomId: z.string(),
   eventType: z.enum([
     'player_registered',
     'hand_started',
     'action_taken',
     'hand_completed',
     'player_busted',
-    'table_error',
-    'table_status',
+    'room_error',
+    'room_status',
   ]),
   message: z.string(),
   timestamp: z.string(),
   payload: z.record(z.string(), z.any()).optional(),
 });
-export type TableEvent = z.infer<typeof tableEventSchema>;
+export type RoomEvent = z.infer<typeof roomEventSchema>;
 
 export const roomSummarySchema = z.object({
   roomId: z.string(),
-  tableId: z.string(),
   gameType: z.literal('poker'),
-  tableAgentCardUrl: z.string().url(),
-  tableBaseUrl: z.string().url().optional(),
+  roomAgentCardUrl: z.string().url(),
+  roomBaseUrl: z.string().url().optional(),
   status: z.enum(['waiting', 'running', 'idle', 'error']),
   handCount: z.number().int().nonnegative(),
   playerCount: z.number().int().nonnegative(),
@@ -78,33 +76,32 @@ export type RoomSummary = z.infer<typeof roomSummarySchema>;
 
 export const roomSnapshotSchema = z.object({
   roomId: z.string(),
-  config: tableConfigSchema,
-  summary: tableSummarySchema.optional(),
-  tableAgentCardUrl: z.string().url(),
-  tableBaseUrl: z.string().url().optional(),
-  events: z.array(tableEventSchema),
+  config: roomConfigSchema,
+  summary: roomStateSchema.optional(),
+  roomAgentCardUrl: z.string().url(),
+  roomBaseUrl: z.string().url().optional(),
+  events: z.array(roomEventSchema),
 });
 export type RoomSnapshot = z.infer<typeof roomSnapshotSchema>;
 
 export const createRoomInputSchema = z.object({
   roomId: z.string().optional(),
-  tableId: z.string().optional(),
   gameType: z.literal('poker').default('poker'),
-  tableAgentCardUrl: z.string().url().optional(),
-  tableAgentSkills: z
+  roomAgentCardUrl: z.string().url().optional(),
+  roomAgentSkills: z
     .object({
-      configure: z.string().default('configureTable'),
+      configure: z.string().default('configureRoom'),
       register: z.string().default('registerPlayer'),
-      start: z.string().default('startGame'),
-      summary: z.string().default('tableSummary'),
+      start: z.string().default('startRoom'),
+      summary: z.string().default('roomSummary'),
     })
     .default({
-      configure: 'configureTable',
+      configure: 'configureRoom',
       register: 'registerPlayer',
-      start: 'startGame',
-      summary: 'tableSummary',
+      start: 'startRoom',
+      summary: 'roomSummary',
     }),
-  config: tableConfigSchema.default({
+  config: roomConfigSchema.default({
     startingStack: 1,
     smallBlind: 0.1,
     bigBlind: 1,
