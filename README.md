@@ -128,7 +128,7 @@ Entry points mirror these capabilities:
 - `listRooms`
 - `recordGameEvent` (callback for all game agents)
 
-Responses from `listRooms`/`/ui/rooms` include each room’s `roomAgentCardUrl`, `gameType`, and (when auto-spawned) `roomBaseUrl`, so other agents or tools can talk to a specific room endpoint directly. When creating rooms programmatically you can also supply `launchOptions.port` to pin a room agent to a specific port. Once a poker room has `maxSeats` players registered, the casino automatically invokes `startRoom` so play begins immediately; other game types can decide their own auto-start logic.
+Responses from `listRooms`/`/ui/rooms` include each room’s `roomAgentCardUrl`, `gameType`, and (when auto-spawned) `roomBaseUrl`, so other agents or tools can talk to a specific room endpoint directly. When creating rooms programmatically you can also supply `launchOptions.port` to pin a room agent to a specific port. Once a poker room has `maxPlayers` players registered, the casino automatically invokes `startRoom` so play begins immediately; other game types can decide their own auto-start logic.
 
 Each room agent exposes its own card with entrypoints (`configureRoom`, `registerPlayer`, `startRoom`, `roomSummary`) and only communicates with the casino via A2A. The slot machine agent uses the shared callback to emit spin updates/busts.
 

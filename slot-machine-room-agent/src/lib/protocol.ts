@@ -69,6 +69,7 @@ export const roomEventSchema = z.object({
   eventType: z.enum([
     'player_registered',
     'hand_started',
+    'hand_status',
     'action_taken',
     'hand_completed',
     'player_busted',

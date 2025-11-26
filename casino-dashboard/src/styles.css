@@ -384,7 +384,8 @@ th {
 
 .poker-table {
   position: relative;
-  width: 100%;
+  width: 85%;
+  max-width: 960px;
   aspect-ratio: 16 / 10;
   max-height: 70vh;
   margin: 0 auto;
@@ -402,8 +403,8 @@ th {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 70%;
-  height: 60%;
+  width: 65%;
+  height: 58%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -438,6 +439,59 @@ th {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.5rem;
+  min-height: 96px;
+  align-items: center;
+}
+
+.card-slot {
+  width: 64px;
+  height: 92px;
+  border-radius: 10px;
+  border: 2px dashed rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.03);
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+
+.card-slot.pending {
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.card-slot.future {
+  opacity: 0.4;
+}
+
+.card-slot .card-slot-inner {
+  width: 70%;
+  height: 70%;
+  border-radius: 8px;
+  border: 2px dashed rgba(255, 255, 255, 0.2);
+}
+
+@keyframes cardReveal {
+  0% {
+    transform: translateY(-20px) scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes cardFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
 }
 
 .playing-card {
@@ -453,6 +507,31 @@ th {
   display: grid;
   place-items: center;
   font-family: 'Georgia', 'Times New Roman', serif;
+  animation: cardFloat 6s ease-in-out infinite;
+}
+
+.playing-card.card-enter {
+  animation: cardReveal 0.4s ease, cardFloat 6s ease-in-out infinite;
+}
+
+.playing-card.playing-card-small {
+  width: 48px;
+  height: 68px;
+}
+
+.playing-card.back {
+  background: linear-gradient(135deg, #0f172a, #1e3a8a);
+  border-color: rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.card-back-pattern {
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  opacity: 0.8;
 }
 
 .playing-card .pip {
@@ -553,11 +632,11 @@ th {
 
 .player-seat {
   position: relative;
-  width: 140px;
+  width: 125px;
   background: rgba(0, 0, 0, 0.6);
   border: 2px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
-  padding: 1rem;
+  padding: 0.9rem;
   text-align: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   transition: all 0.3s ease;
@@ -573,6 +652,24 @@ th {
   border-color: #ffd700;
   box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
   animation: pulse 1.5s infinite;
+}
+
+.player-seat.winner {
+  border-color: #34d399;
+  box-shadow: 0 0 18px rgba(52, 211, 153, 0.5);
+  animation: winnerGlow 1.8s ease-in-out infinite;
+}
+
+@keyframes winnerGlow {
+  0% {
+    box-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 26px rgba(52, 211, 153, 0.95);
+  }
+  100% {
+    box-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
+  }
 }
 
 @keyframes pulse {
@@ -606,6 +703,13 @@ th {
   color: #4ade80;
 }
 
+.player-cards {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
 .seat-number {
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.5);
@@ -627,10 +731,57 @@ th {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
 .info-item {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.winner-section {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.winner-title {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9aa4bf;
+}
+
+.winner-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.35rem 0;
+}
+
+.winner-name {
+  font-weight: 600;
+  color: #fff;
+}
+
+.winner-description {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.winner-cards {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
 }
 
 .info-label {

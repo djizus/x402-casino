@@ -45,7 +45,7 @@ export const roomConfigSchema = z.object({
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
-  maxSeats: z.number().int().min(2).max(10),
+  maxPlayers: z.number().int().min(2).max(10),
 });
 export type RoomConfig = z.infer<typeof roomConfigSchema>;
 
@@ -113,6 +113,7 @@ export const roomEventSchema = z.object({
   eventType: z.enum([
     'player_registered',
     'hand_started',
+    'hand_status',
     'action_taken',
     'hand_completed',
     'player_busted',

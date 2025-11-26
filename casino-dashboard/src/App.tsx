@@ -29,8 +29,20 @@ export function App() {
   const buildConfigDefaults = useCallback((game: LobbyGame | undefined) => {
     if (!game) return {};
     const defaults: Record<string, string> = {};
+    const fallbackDefaults: Record<string, Record<string, number>> = {
+      poker: {
+        startingStack: 100,
+        smallBlind: 5,
+        bigBlind: 10,
+        minBuyIn: 100,
+        maxBuyIn: 100,
+        maxHands: 10,
+        maxPlayers: 6,
+      },
+    };
+    const fallback = fallbackDefaults[game.type] ?? {};
     game.configFields.forEach((field) => {
-      const value = game.defaultConfig[field.key];
+      const value = game.defaultConfig[field.key] ?? fallback[field.key];
       defaults[field.key] = typeof value === 'number' || typeof value === 'string' ? String(value) : '';
     });
     return defaults;
@@ -120,10 +132,11 @@ export function App() {
     }
   };
 
-  const events = useMemo(() => {
-    const items = roomSnapshot?.events ?? [];
-    return items.slice(-50).reverse();
-  }, [roomSnapshot]);
+  const events = useMemo(() => roomSnapshot?.events ?? [], [roomSnapshot]);
+  const activityEvents = useMemo(() => {
+    const recent = events.slice(-50);
+    return [...recent].reverse();
+  }, [events]);
 
   const handleRegister = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -402,8 +415,8 @@ export function App() {
                       gap: '0.5rem',
                     }}
                   >
-                    {events.length > 0 ? (
-                      events.map((event: RoomEvent, idx: number) => (
+                    {activityEvents.length > 0 ? (
+                      activityEvents.map((event: RoomEvent, idx: number) => (
                         <div
                           key={`${event.timestamp}-${idx}`}
                           style={{

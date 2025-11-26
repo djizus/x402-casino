@@ -46,7 +46,7 @@ const toConfigNumber = (value: unknown, fallback: number): number => {
   return fallback;
 };
 
-const clampSeats = (value: number): number => {
+const clampMaxPlayers = (value: number): number => {
   const rounded = Math.round(value);
   return Math.min(Math.max(rounded, 2), 10);
 };
@@ -95,7 +95,7 @@ const pokerConfigSchema = z.object({
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
-  maxSeats: z.number().int().min(2).max(10),
+  maxPlayers: z.number().int().min(2).max(10),
 });
 type PokerConfig = z.infer<typeof pokerConfigSchema>;
 
@@ -121,13 +121,13 @@ const blackjackRoomConfigSchema = z.object({
 type BlackjackConfig = z.infer<typeof blackjackRoomConfigSchema>;
 
 const pokerDefaultConfig = pokerConfigSchema.parse({
-  startingStack: readNumberEnv(['POKER_STARTING_STACK', 'STARTING_STACK'], 1),
-  smallBlind: readNumberEnv(['POKER_SMALL_BLIND', 'SMALL_BLIND'], 0.1),
-  bigBlind: readNumberEnv(['POKER_BIG_BLIND', 'BIG_BLIND'], 1),
-  maxHands: Math.max(1, Math.round(readNumberEnv(['POKER_MAX_HANDS', 'MAX_HANDS'], 1))),
-  minBuyIn: readNumberEnv(['POKER_MIN_BUY_IN', 'MIN_BUY_IN'], 0.1),
-  maxBuyIn: readNumberEnv(['POKER_MAX_BUY_IN', 'MAX_BUY_IN'], 1),
-  maxSeats: clampSeats(readNumberEnv(['POKER_MAX_SEATS', 'MAX_SEATS'], 6)),
+  startingStack: readNumberEnv(['POKER_STARTING_STACK', 'STARTING_STACK'], 100),
+  smallBlind: readNumberEnv(['POKER_SMALL_BLIND', 'SMALL_BLIND'], 5),
+  bigBlind: readNumberEnv(['POKER_BIG_BLIND', 'BIG_BLIND'], 10),
+  maxHands: Math.max(1, Math.round(readNumberEnv(['POKER_MAX_HANDS', 'MAX_HANDS'], 10))),
+  minBuyIn: readNumberEnv(['POKER_MIN_BUY_IN', 'MIN_BUY_IN'], 100),
+  maxBuyIn: readNumberEnv(['POKER_MAX_BUY_IN', 'MAX_BUY_IN'], 100),
+  maxPlayers: clampMaxPlayers(readNumberEnv(['POKER_MAX_PLAYERS', 'MAX_PLAYERS'], 6)),
 });
 
 const slotDefaultConfig = slotMachineConfigSchema.parse({
@@ -161,7 +161,7 @@ const buildPokerConfig = (payload: unknown, defaults: PokerConfig = pokerDefault
     minBuyIn: toConfigNumber(data.minBuyIn, defaults.minBuyIn),
     maxBuyIn: toConfigNumber(data.maxBuyIn, defaults.maxBuyIn),
     maxHands: Math.max(1, Math.round(toConfigNumber(data.maxHands, defaults.maxHands))),
-    maxSeats: clampSeats(toConfigNumber(data.maxSeats, defaults.maxSeats)),
+    maxPlayers: clampMaxPlayers(toConfigNumber(data.maxPlayers, defaults.maxPlayers)),
   });
 };
 
@@ -277,7 +277,7 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
     { key: 'minBuyIn', label: 'Min Buy-in', type: 'number', step: 0.1 },
     { key: 'maxBuyIn', label: 'Max Buy-in', type: 'number', step: 0.1 },
     { key: 'maxHands', label: 'Max Hands', type: 'number', step: 1, min: 1 },
-    { key: 'maxSeats', label: 'Seats', type: 'number', step: 1, min: 2, max: 10 },
+    { key: 'maxPlayers', label: 'Max Players', type: 'number', step: 1, min: 2, max: 10 },
   ],
   normalizeConfig: (payload) => buildPokerConfig(payload, pokerDefaultConfig),
   roomAgent: {
@@ -304,7 +304,7 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
       return Math.min(Math.max(requested, config.minBuyIn), config.maxBuyIn);
     },
   },
-  shouldAutoStart: ({ summary, config }) => Boolean(summary && summary.players.length >= config.maxSeats),
+  shouldAutoStart: ({ summary, config }) => Boolean(summary && summary.players.length >= config.maxPlayers),
 };
 
 const slotDefinition: RoomGameDefinition<SlotMachineConfig> = {

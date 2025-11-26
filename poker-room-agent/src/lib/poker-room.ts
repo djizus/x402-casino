@@ -22,6 +22,7 @@ import { compareHandScores, describeHand, evaluateBestHand } from './hand-evalua
 
 type RoomStatus = 'waiting' | 'running' | 'idle' | 'error';
 const CHIP_EPSILON = 1e-6;
+type HandStage = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
 
 interface RegisteredPlayer {
   id: string;
@@ -102,8 +103,8 @@ export class PokerRoom {
       throw new Error('Room is not configured.');
     }
 
-    if (this.players.size >= this.roomConfig.maxSeats) {
-      throw new Error(`Room ${this.roomId} is full (${this.roomConfig.maxSeats} seats).`);
+    if (this.players.size >= this.roomConfig.maxPlayers) {
+      throw new Error(`Room ${this.roomId} is full (${this.roomConfig.maxPlayers} players max).`);
     }
 
     const seatNumber = this.findSeat(input.preferredSeat);
@@ -237,26 +238,27 @@ export class PokerRoom {
       currentBet: 0,
     };
 
+    await this.publishHandStage('preflop', communityCards);
     await this.playBettingRound('preflop', seats, holeCards, communityCards, config, bettingState);
 
     communityCards.push(...drawCards(deck, 3));
+    await this.publishHandStage('flop', communityCards);
     await this.playBettingRound('flop', seats, holeCards, communityCards, config, bettingState);
 
     communityCards.push(...drawCards(deck, 1));
+    await this.publishHandStage('turn', communityCards);
     await this.playBettingRound('turn', seats, holeCards, communityCards, config, bettingState);
 
     communityCards.push(...drawCards(deck, 1));
+    await this.publishHandStage('river', communityCards);
     await this.playBettingRound('river', seats, holeCards, communityCards, config, bettingState);
 
     await this.settlePot(seats, holeCards, communityCards, bettingState);
+    await this.publishHandStage('showdown', communityCards);
 
     this.lastMessage = `Hand #${this.handCount + 1} completed. Community cards: ${communityCards
       .map(cardToString)
       .join(' ')}`;
-    await this.publishEvent('hand_completed', this.lastMessage, {
-      communityCards: communityCards.map(cardToString),
-      handNumber: this.handCount + 1,
-    });
   }
 
   private async playBettingRound(
@@ -345,7 +347,7 @@ export class PokerRoom {
 
       const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
       const action = actionResponseSchema.parse(result.output ?? {});
-      const resolved = await this.applyAction(seat, action, bettingRound, state, legalActions);
+      const resolved = await this.applyAction(seat, action, bettingRound, state, legalActions, communityCards);
 
       if (resolved === 'fold') {
         activeOrder.splice(index % activeOrder.length, 1);
@@ -378,12 +380,14 @@ export class PokerRoom {
       currentBet: number;
     },
     allowedActions: string[],
+    communityCards: Card[],
   ): Promise<'fold' | 'call' | 'check' | 'bet' | 'raise'> {
     const notify = async (message: string, payload?: Record<string, unknown>) => {
       this.lastMessage = message;
       await this.publishEvent('action_taken', message, {
         playerId: seat.id,
         bettingRound: round,
+        communityCards: communityCards.map(cardToString),
         ...payload,
       });
     };
@@ -467,9 +471,22 @@ export class PokerRoom {
       folded: Set<string>;
     },
   ): Promise<void> {
+    const handNumber = this.handCount + 1;
+    const showdownHands = seats.map((seat) => ({
+      playerId: seat.id,
+      displayName: seat.displayName,
+      cards: (holeCards.get(seat.id) ?? []).map(cardToString),
+    }));
+
     if (state.pot <= 0) {
       this.lastMessage = 'Hand completed with no chips in the pot.';
-      await this.publishEvent('hand_completed', this.lastMessage);
+      await this.publishEvent('hand_completed', this.lastMessage, {
+        communityCards: communityCards.map(cardToString),
+        pot: state.pot,
+        winningHands: [],
+        showdownHands,
+        handNumber,
+      });
       return;
     }
 
@@ -482,6 +499,18 @@ export class PokerRoom {
       await this.publishEvent('hand_completed', this.lastMessage, {
         winner: winner.displayName,
         amount: state.pot,
+        communityCards: communityCards.map(cardToString),
+        winningHands: [
+          {
+            playerId: winner.id,
+            displayName: winner.displayName,
+            cards: (holeCards.get(winner.id) ?? []).map(cardToString),
+            amountWon: state.pot,
+            description: 'Last player standing',
+          },
+        ],
+        showdownHands,
+        handNumber,
       });
       return;
     }
@@ -519,7 +548,36 @@ export class PokerRoom {
       pot: state.pot,
       winners: winners.map((winner) => winner.seat.displayName),
       share,
+      communityCards: communityCards.map(cardToString),
+      winningHands: winners.map((winner) => ({
+        playerId: winner.seat.id,
+        displayName: winner.seat.displayName,
+        cards: (holeCards.get(winner.seat.id) ?? []).map(cardToString),
+        amountWon: share,
+        description: describeHand(winner.score),
+      })),
+      showdownHands,
+      handNumber,
     });
+  }
+
+  private async publishHandStage(stage: HandStage, cards: Card[]): Promise<void> {
+    const descriptors = {
+      flop: 'Dealt the flop',
+      turn: 'Dealt the turn',
+      river: 'Dealt the river',
+      showdown: 'Showdown',
+      preflop: 'Starting preflop',
+    } as const;
+    const cardsLabel = cards.map(cardToString).join(' ') || '—';
+    await this.publishEvent(
+      'hand_status',
+      `${descriptors[stage]}${stage === 'preflop' ? '' : `: ${cardsLabel}`}.`,
+      {
+        stage,
+        communityCards: cards.map(cardToString),
+      },
+    );
   }
 
   private async publishEvent(

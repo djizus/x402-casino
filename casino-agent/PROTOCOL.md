@@ -81,7 +81,7 @@ const roomConfigSchema = z.object({
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
-  maxSeats: z.number().int().min(2).max(10),
+  maxPlayers: z.number().int().min(2).max(10),
 });
 
 const createRoomInputSchema = z.object({
@@ -133,7 +133,7 @@ const startRoomInputSchema = z.object({
 - `startRoom` proxies to the room agent’s `startRoom` entrypoint with optional overrides.
 - `listRooms` returns lobby summaries, while `recordGameEvent` ingests structured telemetry from room agents.
 
-When `config.maxSeats` players are registered (and the room isn’t already running) the lobby automatically starts that room. Rooms created via the embedded launcher can also specify `launchOptions.port` to pin the spawned poker room agent to a stable TCP port. Room summaries/snapshots expose each room’s `roomAgentCardUrl` and, when known, `roomBaseUrl`, so other agents can connect to a specific room directly.
+When `config.maxPlayers` players are registered (and the room isn’t already running) the lobby automatically starts that room. Rooms created via the embedded launcher can also specify `launchOptions.port` to pin the spawned poker room agent to a stable TCP port. Room summaries/snapshots expose each room’s `roomAgentCardUrl` and, when known, `roomBaseUrl`, so other agents can connect to a specific room directly.
 
 ---
 
@@ -166,6 +166,7 @@ const roomEventSchema = z.object({
   eventType: z.enum([
     'player_registered',
     'hand_started',
+    'hand_status',
     'action_taken',
     'hand_completed',
     'player_busted',
