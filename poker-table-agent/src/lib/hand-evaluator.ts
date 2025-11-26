@@ -1,4 +1,4 @@
-import type { Card } from './types';
+import type { Card } from './protocol';
 
 const rankValue: Record<string, number> = {
   '2': 2,
@@ -61,7 +61,6 @@ const isStraight = (ranks: number[]): number | null => {
     return null;
   }
 
-  // Handle wheel straight (A2345)
   const extended = unique.slice();
   if (extended[0] === 14) {
     extended.push(1);
@@ -229,6 +228,4 @@ export const evaluateBestHand = (cards: Card[]): HandScore => {
 };
 
 export const describeHand = (score: HandScore): string =>
-  `${HAND_NAMES[score.rank]} (${score.bestCards
-    .map((card) => `${card.rank}${card.suit[0].toUpperCase()}`)
-    .join(' ')})`;
+  `${HAND_NAMES[score.rank]} (${score.bestCards.map((card) => `${card.rank}${card.suit[0].toUpperCase()}`).join(' ')})`;

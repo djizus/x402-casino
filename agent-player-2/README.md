@@ -1,4 +1,4 @@
-## agent-player-1
+## agent-player-2
 
 This project was scaffolded with `create-agent-kit` and ships with a ready-to-run agent app built on [`@lucid-agents/core`](https://www.npmjs.com/package/@lucid-agents/core).
 
