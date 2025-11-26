@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
 import { createRoom, fetchLobbyState, fetchRoomSnapshot, registerPlayer } from './api';
-import type { LobbyState, RoomSnapshot, RoomEvent } from './types';
+import type { LobbyGame, LobbyState, RoomSnapshot, RoomEvent } from './types';
 
 const POLL_INTERVAL = Number(import.meta.env.VITE_POLL_INTERVAL ?? 4000);
 
@@ -17,13 +17,6 @@ const formatAmount = (value: number | undefined) => {
 
 const defaultCreateForm = {
   roomId: '',
-  startingStack: '1',
-  smallBlind: '0.1',
-  bigBlind: '1',
-  minBuyIn: '0.1',
-  maxBuyIn: '1',
-  maxHands: '1',
-  maxSeats: '6',
 };
 
 const defaultRegisterForm = {
@@ -39,15 +32,35 @@ export function App() {
   const [roomSnapshot, setRoomSnapshot] = useState<RoomSnapshot | null>(null);
   const [loadingLobby, setLoadingLobby] = useState(true);
   const [loadingRoom, setLoadingRoom] = useState(false);
+  const [gameOptions, setGameOptions] = useState<LobbyGame[]>([]);
+  const [selectedGameType, setSelectedGameType] = useState('');
+  const [createConfigValues, setCreateConfigValues] = useState<Record<string, string>>({});
   const [createForm, setCreateForm] = useState(defaultCreateForm);
   const [registerForm, setRegisterForm] = useState(defaultRegisterForm);
   const [createToast, setCreateToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [registerToast, setRegisterToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [createInitialized, setCreateInitialized] = useState(false);
 
+  const buildConfigDefaults = useCallback(
+    (game: LobbyGame | undefined) => {
+      if (!game) {
+        return {};
+      }
+      const defaults: Record<string, string> = {};
+      game.configFields.forEach((field) => {
+        const value = game.defaultConfig[field.key];
+        defaults[field.key] =
+          typeof value === 'number' || typeof value === 'string' ? String(value) : '';
+      });
+      return defaults;
+    },
+    [],
+  );
+
   const refreshLobby = useCallback(async () => {
     const data = await fetchLobbyState();
     setLobby(data);
+    setGameOptions(data.games);
     setLoadingLobby(false);
 
     if (!selectedRoomId) {
@@ -56,20 +69,21 @@ export function App() {
       setSelectedRoomId(data.rooms[0]?.roomId ?? '');
     }
 
-    if (!createInitialized) {
-      setCreateForm((prev) => ({
-        ...prev,
-        startingStack: String(data.defaultConfig.startingStack),
-        smallBlind: String(data.defaultConfig.smallBlind),
-        bigBlind: String(data.defaultConfig.bigBlind),
-        minBuyIn: String(data.defaultConfig.minBuyIn),
-        maxBuyIn: String(data.defaultConfig.maxBuyIn),
-        maxHands: String(data.defaultConfig.maxHands),
-        maxSeats: String(data.defaultConfig.maxSeats),
-      }));
+    const fallbackGame =
+      data.games.find((game) => game.type === data.defaultGameType) ?? data.games[0];
+
+    if ((!selectedGameType || !data.games.some((game) => game.type === selectedGameType)) && fallbackGame) {
+      setSelectedGameType(fallbackGame.type);
+      setCreateConfigValues(buildConfigDefaults(fallbackGame));
       setCreateInitialized(true);
+    } else if (!createInitialized) {
+      const currentGame = data.games.find((game) => game.type === selectedGameType);
+      if (currentGame) {
+        setCreateConfigValues(buildConfigDefaults(currentGame));
+        setCreateInitialized(true);
+      }
     }
-  }, [selectedRoomId, createInitialized]);
+  }, [selectedRoomId, selectedGameType, createInitialized, buildConfigDefaults]);
 
   const refreshRoom = useCallback(
     async (roomId: string) => {
@@ -109,22 +123,32 @@ export function App() {
   const handleCreateRoom = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setCreateToast(null);
+    const game = gameMap.get(selectedGameType);
+    if (!game) {
+      setCreateToast({ kind: 'error', text: 'Select a game type first.' });
+      return;
+    }
     try {
+      const config: Record<string, number> = {};
+      for (const field of game.configFields) {
+        const rawValue = createConfigValues[field.key];
+        const parsed = Number(rawValue);
+        if (!Number.isFinite(parsed)) {
+          throw new Error(`Invalid value for ${field.label}.`);
+        }
+        config[field.key] = parsed;
+      }
       const payload = {
         roomId: createForm.roomId.trim() || undefined,
-        startingStack: Number(createForm.startingStack),
-        smallBlind: Number(createForm.smallBlind),
-        bigBlind: Number(createForm.bigBlind),
-        minBuyIn: Number(createForm.minBuyIn),
-        maxBuyIn: Number(createForm.maxBuyIn),
-        maxHands: Number(createForm.maxHands),
-        maxSeats: Number(createForm.maxSeats),
+        gameType: game.type,
+        config,
       };
       const room = await createRoom(payload);
       setCreateToast({ kind: 'success', text: `Created room ${room.roomId}.` });
       setSelectedRoomId(room.roomId);
       setCreateForm(defaultCreateForm);
-      setCreateInitialized(false);
+      setCreateConfigValues(buildConfigDefaults(game));
+      setCreateInitialized(true);
       refreshLobby();
     } catch (error) {
       setCreateToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to create room.' });
@@ -135,6 +159,10 @@ export function App() {
     event.preventDefault();
     if (!selectedRoomId) {
       setRegisterToast({ kind: 'error', text: 'Select a room first.' });
+      return;
+    }
+    if (activeRoomGame && !activeRoomGame.supportsRegistration) {
+      setRegisterToast({ kind: 'error', text: 'This room type does not accept registrations.' });
       return;
     }
     setRegisterToast(null);
@@ -155,6 +183,8 @@ export function App() {
   };
 
   const players = roomSnapshot?.summary?.players ?? [];
+  const gameMap = useMemo(() => new Map(gameOptions.map((game) => [game.type, game])), [gameOptions]);
+  const activeRoomGame = roomSnapshot ? gameMap.get(roomSnapshot.gameType) : undefined;
   const events = useMemo<RoomEvent[]>(() => {
     const items = roomSnapshot?.events ?? [];
     return items.slice(-50).reverse();
@@ -186,11 +216,12 @@ export function App() {
               >
                 <div>
                   <strong>{room.roomId}</strong>
+                  <div>Game: {gameMap.get(room.gameType)?.label ?? room.gameType}</div>
                 </div>
                 <div className="status-pill" data-status={room.status}>
                   {room.status}
                 </div>
-                <div>{room.playerCount} players · {room.handCount} hands</div>
+                <div>{room.playerCount} players · {room.handCount} rounds</div>
                 {room.roomBaseUrl && <small>{room.roomBaseUrl}</small>}
                 {room.message && <small>{room.message}</small>}
               </button>
@@ -214,24 +245,57 @@ export function App() {
                 placeholder="Optional (auto-generated)"
               />
             </div>
-            {(
-              ['startingStack', 'smallBlind', 'bigBlind', 'minBuyIn', 'maxBuyIn', 'maxHands', 'maxSeats'] as const
-            ).map((key) => (
-              <div key={key}>
-                <label htmlFor={`create-${key}`}>{key}</label>
-                <input
-                  id={`create-${key}`}
-                  type="number"
-                  step={key === 'maxSeats' ? 1 : 0.01}
-                  min={key === 'maxSeats' ? 2 : undefined}
-                  max={key === 'maxSeats' ? 10 : undefined}
-                  required
-                  value={(createForm as Record<string, string>)[key]}
-                  onChange={(e) => setCreateForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                />
-              </div>
-            ))}
+            <div>
+              <label htmlFor="gameType">Game Type</label>
+              <select
+                id="gameType"
+                value={selectedGameType}
+                onChange={(e) => {
+                  const nextType = e.target.value;
+                  setSelectedGameType(nextType);
+                  setCreateConfigValues(buildConfigDefaults(gameMap.get(nextType)));
+                  setCreateInitialized(true);
+                }}
+              >
+                <option value="" disabled>
+                  Select a game
+                </option>
+                {gameOptions.map((game) => (
+                  <option key={game.type} value={game.type}>
+                    {game.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
+          {selectedGameType && gameMap.get(selectedGameType)?.description && (
+            <p>{gameMap.get(selectedGameType)!.description}</p>
+          )}
+          {selectedGameType && gameMap.get(selectedGameType) && (
+            <div className="grid">
+              {gameMap.get(selectedGameType)!.configFields.map((field) => (
+                <div key={field.key}>
+                  <label htmlFor={`create-${field.key}`}>{field.label}</label>
+                  <input
+                    id={`create-${field.key}`}
+                    type={field.type === 'number' ? 'number' : 'text'}
+                    step={field.step ?? (field.type === 'number' ? 0.1 : undefined)}
+                    min={field.min}
+                    max={field.max}
+                    required
+                    value={createConfigValues[field.key] ?? ''}
+                    onChange={(e) =>
+                      setCreateConfigValues((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
+                    }
+                  />
+                  {field.helperText && <small>{field.helperText}</small>}
+                </div>
+              ))}
+            </div>
+          )}
           <button type="submit">Create Room</button>
           {createToast && (
             <div className="toast" data-kind={createToast.kind}>
@@ -250,7 +314,8 @@ export function App() {
         ) : roomSnapshot ? (
           <>
             <p>
-              Room <strong>{roomSnapshot.roomId}</strong>
+              Room <strong>{roomSnapshot.roomId}</strong> ·{' '}
+              <strong>{gameMap.get(roomSnapshot.gameType)?.label ?? roomSnapshot.gameType}</strong>
             </p>
             <div className="grid">
               <div>
@@ -260,30 +325,12 @@ export function App() {
                 </div>
               </div>
               <div>
-                <div>Hands Played</div>
+                <div>Rounds Played</div>
                 <strong>{roomSnapshot.summary?.handCount ?? 0}</strong>
               </div>
               <div>
                 <div>Players</div>
                 <strong>{players.length}</strong>
-              </div>
-              <div>
-                <div>Seats</div>
-                <strong>
-                  {players.length} / {roomSnapshot.config.maxSeats}
-                </strong>
-              </div>
-              <div>
-                <div>Blinds</div>
-                <strong>
-                  {formatAmount(roomSnapshot.config.smallBlind)} / {formatAmount(roomSnapshot.config.bigBlind)}
-                </strong>
-              </div>
-              <div>
-                <div>Buy-ins</div>
-                <strong>
-                  {formatAmount(roomSnapshot.config.minBuyIn)} - {formatAmount(roomSnapshot.config.maxBuyIn)}
-                </strong>
               </div>
               {roomSnapshot.roomBaseUrl && (
                 <div>
@@ -298,6 +345,24 @@ export function App() {
                 <small>{roomSnapshot.roomAgentCardUrl}</small>
               </div>
             </div>
+            {Object.keys(roomSnapshot.config ?? {}).length > 0 && (
+              <>
+                <h3>Configuration</h3>
+                <div className="grid">
+                  {Object.entries(roomSnapshot.config).map(([key, value]) => (
+                    <div key={key}>
+                      <div>{key}</div>
+                      <strong>
+                        {typeof value === 'number' ? formatAmount(value) : String(value)}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {activeRoomGame && !activeRoomGame.supportsRegistration && (
+              <p>This room type manages its roster automatically.</p>
+            )}
             <p>{roomSnapshot.summary?.message || 'No recent activity.'}</p>
           </>
         ) : (
@@ -305,7 +370,7 @@ export function App() {
         )}
       </section>
 
-      {selectedRoomId && (
+      {selectedRoomId && activeRoomGame?.supportsRegistration && (
         <>
           <section className="card">
             <h2>Register Player</h2>

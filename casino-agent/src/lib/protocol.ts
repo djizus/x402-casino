@@ -1,14 +1,6 @@
 import { z } from 'zod';
 
-export const roomConfigSchema = z.object({
-  startingStack: z.number().positive().default(1),
-  smallBlind: z.number().positive().default(0.1),
-  bigBlind: z.number().positive().default(1),
-  minBuyIn: z.number().positive().default(0.1),
-  maxBuyIn: z.number().positive().default(1),
-  maxHands: z.number().int().positive().default(1),
-  maxSeats: z.number().int().min(2).max(10).default(6),
-});
+export const roomConfigSchema = z.record(z.string(), z.any());
 export type RoomConfig = z.infer<typeof roomConfigSchema>;
 
 export const signupInvitationSchema = z.object({
@@ -64,7 +56,7 @@ export type RoomEvent = z.infer<typeof roomEventSchema>;
 
 export const roomSummarySchema = z.object({
   roomId: z.string(),
-  gameType: z.literal('poker'),
+  gameType: z.string(),
   roomAgentCardUrl: z.string().url(),
   roomBaseUrl: z.string().url().optional(),
   status: z.enum(['waiting', 'running', 'idle', 'error']),
@@ -76,6 +68,7 @@ export type RoomSummary = z.infer<typeof roomSummarySchema>;
 
 export const roomSnapshotSchema = z.object({
   roomId: z.string(),
+  gameType: z.string(),
   config: roomConfigSchema,
   summary: roomStateSchema.optional(),
   roomAgentCardUrl: z.string().url(),
@@ -86,30 +79,17 @@ export type RoomSnapshot = z.infer<typeof roomSnapshotSchema>;
 
 export const createRoomInputSchema = z.object({
   roomId: z.string().optional(),
-  gameType: z.literal('poker').default('poker'),
+  gameType: z.string().min(1).default('poker'),
   roomAgentCardUrl: z.string().url().optional(),
   roomAgentSkills: z
     .object({
-      configure: z.string().default('configureRoom'),
-      register: z.string().default('registerPlayer'),
-      start: z.string().default('startRoom'),
-      summary: z.string().default('roomSummary'),
+      configure: z.string().optional(),
+      register: z.string().optional(),
+      start: z.string().optional(),
+      summary: z.string().optional(),
     })
-    .default({
-      configure: 'configureRoom',
-      register: 'registerPlayer',
-      start: 'startRoom',
-      summary: 'roomSummary',
-    }),
-  config: roomConfigSchema.default({
-    startingStack: 1,
-    smallBlind: 0.1,
-    bigBlind: 1,
-    minBuyIn: 0.1,
-    maxBuyIn: 1,
-    maxHands: 1,
-    maxSeats: 6,
-  }),
+    .optional(),
+  config: roomConfigSchema.optional(),
   launchOptions: z
     .object({
       port: z.number().int().positive().optional(),
@@ -138,13 +118,7 @@ export type RegisterPlayerResult = z.infer<typeof registerPlayerResultSchema>;
 
 export const startRoomInputSchema = z.object({
   roomId: z.string(),
-  overrides: z
-    .object({
-      maxHands: z.number().int().positive().optional(),
-      smallBlind: z.number().positive().optional(),
-      bigBlind: z.number().positive().optional(),
-    })
-    .optional(),
+  overrides: z.record(z.string(), z.any()).optional(),
 });
 export type StartRoomInput = z.infer<typeof startRoomInputSchema>;
 

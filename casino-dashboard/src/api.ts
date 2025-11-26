@@ -28,14 +28,12 @@ export const fetchRoomSnapshot = async (roomId: string): Promise<RoomSnapshot> =
 export const createRoom = async (input: CreateRoomPayload) => {
   const body: Record<string, unknown> = {
     roomId: input.roomId || undefined,
-    startingStack: input.startingStack,
-    smallBlind: input.smallBlind,
-    bigBlind: input.bigBlind,
-    minBuyIn: input.minBuyIn,
-    maxBuyIn: input.maxBuyIn,
-    maxHands: input.maxHands,
-    maxSeats: input.maxSeats,
+    gameType: input.gameType,
+    config: input.config,
   };
+  if (input.roomAgentCardUrl) {
+    body.roomAgentCardUrl = input.roomAgentCardUrl;
+  }
 
   const res = await fetch(`${BASE_URL}/ui/rooms`, {
     method: 'POST',

@@ -13,15 +13,7 @@ export type RoomStateSummary = {
   message?: string;
 };
 
-export type RoomConfig = {
-  startingStack: number;
-  smallBlind: number;
-  bigBlind: number;
-  minBuyIn: number;
-  maxBuyIn: number;
-  maxHands: number;
-  maxSeats: number;
-};
+export type RoomConfig = Record<string, number | string>;
 
 export type RoomEvent = {
   roomId: string;
@@ -51,6 +43,7 @@ export type RoomSummary = {
 
 export type RoomSnapshot = {
   roomId: string;
+  gameType: string;
   config: RoomConfig;
   summary?: RoomStateSummary;
   roomAgentCardUrl: string;
@@ -58,20 +51,36 @@ export type RoomSnapshot = {
   events: RoomEvent[];
 };
 
+export type GameConfigField = {
+  key: string;
+  label: string;
+  type: 'number' | 'text';
+  min?: number;
+  max?: number;
+  step?: number;
+  helperText?: string;
+};
+
+export type LobbyGame = {
+  type: string;
+  label: string;
+  description: string;
+  supportsRegistration: boolean;
+  configFields: GameConfigField[];
+  defaultConfig: RoomConfig;
+};
+
 export type LobbyState = {
   rooms: RoomSummary[];
-  defaultConfig: RoomConfig;
+  games: LobbyGame[];
+  defaultGameType: string;
 };
 
 export type CreateRoomPayload = {
   roomId?: string;
-  startingStack: number;
-  smallBlind: number;
-  bigBlind: number;
-  minBuyIn: number;
-  maxBuyIn: number;
-  maxHands: number;
-  maxSeats: number;
+  gameType: string;
+  config: Record<string, number>;
+  roomAgentCardUrl?: string;
 };
 
 export type RegisterPayload = {

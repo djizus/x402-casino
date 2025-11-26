@@ -21,17 +21,10 @@ import {
   roomEventSchema,
   roomStateSchema,
 } from './protocol';
-import { RoomLauncher } from './room-launcher';
+import { RoomGameDefinition, RoomAgentSkills } from './room-definitions';
 
 export type CasinoRuntime = AgentRuntime & {
   a2a?: A2ARuntime;
-};
-
-type RoomAgentSkills = {
-  configure: string;
-  register: string;
-  start: string;
-  summary: string;
 };
 
 interface RoomAgentHandle {
@@ -47,7 +40,8 @@ interface RoomProcessHandle {
 
 interface ManagedRoom {
   roomId: string;
-  gameType: 'poker';
+  gameType: string;
+  definition: RoomGameDefinition;
   config: RoomConfig;
   roomAgent: RoomAgentHandle;
   roomBaseUrl?: string;
@@ -61,18 +55,20 @@ export class RoomManager {
   private readonly runtime: CasinoRuntime;
   private readonly casinoName: string;
   private readonly callback: { agentCardUrl: string; eventSkill: string };
-  private readonly roomLauncher?: RoomLauncher;
+  private readonly games: Map<string, RoomGameDefinition>;
+  private readonly defaultGameType: string;
 
   constructor(
     runtime: CasinoRuntime,
     casinoName: string,
     callback: { agentCardUrl: string; eventSkill: string },
-    options?: { roomLauncher?: RoomLauncher },
+    options: { games: Map<string, RoomGameDefinition>; defaultGameType?: string },
   ) {
     this.runtime = runtime;
     this.casinoName = casinoName;
     this.callback = callback;
-    this.roomLauncher = options?.roomLauncher;
+    this.games = options.games;
+    this.defaultGameType = options.defaultGameType ?? 'poker';
   }
 
   public listRooms(): RoomSummary[] {
@@ -103,16 +99,23 @@ export class RoomManager {
       throw new Error(`Room ${roomId} already exists.`);
     }
 
+    const gameType = input.gameType ?? this.defaultGameType;
+    const definition = this.requireGame(gameType);
+    const rawConfig = typeof input.config === 'object' && input.config ? input.config : undefined;
+    const normalizedConfig = definition.normalizeConfig(rawConfig, definition.defaultConfig);
+    const config = definition.configSchema.parse(normalizedConfig);
+
     const a2a = this.ensureA2A();
-    let roomAgentCardUrl = input.roomAgentCardUrl;
+    let roomAgentCardUrl = input.roomAgentCardUrl ?? definition.roomAgent.defaultCardUrl;
     let roomBaseUrl: string | undefined;
     let roomProcess: RoomProcessHandle | undefined;
 
     if (!roomAgentCardUrl) {
-      if (!this.roomLauncher) {
-        throw new Error('roomAgentCardUrl is required when no room launcher is configured.');
+      const launcher = definition.roomAgent.launcher;
+      if (!launcher) {
+        throw new Error(`roomAgentCardUrl is required for ${definition.type} rooms when no launcher is configured.`);
       }
-      const launched = await this.roomLauncher.launch(roomId, { port: input.launchOptions?.port });
+      const launched = await launcher.launch(roomId, { port: input.launchOptions?.port });
       roomAgentCardUrl = launched.cardUrl;
       roomBaseUrl = launched.baseUrl;
       roomProcess = {
@@ -131,18 +134,19 @@ export class RoomManager {
     }
 
     const tableCard = await a2a.fetchCard(roomAgentCardUrl);
+    const requestedSkills = input.roomAgentSkills ?? {};
     const skills: RoomAgentSkills = {
-      configure: input.roomAgentSkills.configure,
-      register: input.roomAgentSkills.register,
-      start: input.roomAgentSkills.start,
-      summary: input.roomAgentSkills.summary,
+      configure: requestedSkills.configure ?? definition.roomAgent.skills.configure,
+      register: requestedSkills.register ?? definition.roomAgent.skills.register,
+      start: requestedSkills.start ?? definition.roomAgent.skills.start,
+      summary: requestedSkills.summary ?? definition.roomAgent.skills.summary,
     };
 
     try {
       await a2a.client.invoke(tableCard, skills.configure, {
         roomId,
         casinoName: this.casinoName,
-        config: input.config,
+        config,
         casinoCallback: {
           agentCardUrl: this.callback.agentCardUrl,
           eventSkill: this.callback.eventSkill,
@@ -155,8 +159,9 @@ export class RoomManager {
 
     const room: ManagedRoom = {
       roomId,
-      gameType: 'poker',
-      config: input.config,
+      gameType: definition.type,
+      definition,
+      config,
       roomAgent: {
         cardUrl: roomAgentCardUrl,
         card: tableCard,
@@ -180,21 +185,24 @@ export class RoomManager {
 
   public async registerPlayer(input: RegisterPlayerInput): Promise<RegisterPlayerResult> {
     const room = this.requireRoom(input.roomId);
+    if (!room.definition.supportsRegistration || !room.definition.registration) {
+      throw new Error(`Room ${room.roomId} does not accept player registrations.`);
+    }
+    const registration = room.definition.registration;
     const a2a = this.ensureA2A();
 
     const playerCard = await a2a.fetchCard(input.agentCardUrl);
-    const invitation = signupInvitationSchema.parse({
-      casinoName: this.casinoName,
-      roomId: room.roomId,
-      minBuyIn: room.config.minBuyIn,
-      maxBuyIn: room.config.maxBuyIn,
-      smallBlind: room.config.smallBlind,
-      bigBlind: room.config.bigBlind,
-    });
+    const invitation = signupInvitationSchema.parse(
+      registration.buildInvitation({
+        casinoName: this.casinoName,
+        roomId: room.roomId,
+        config: room.config,
+      }),
+    );
 
     const signupResult = await a2a.client.invoke(playerCard, input.signupSkill, invitation);
     const signup = playerSignupResponseSchema.parse(signupResult.output ?? {});
-    const buyIn = this.clampBuyIn(signup.buyIn ?? room.config.startingStack, room.config);
+    const buyIn = registration.clampBuyIn(signup.buyIn, room.config);
     const actionSkill = input.actionSkill ?? signup.actionSkill ?? 'act';
     const playerId = randomUUID();
 
@@ -254,13 +262,6 @@ export class RoomManager {
     return this.toSnapshot(room);
   }
 
-  private clampBuyIn(value: number, config: RoomConfig): number {
-    if (!Number.isFinite(value)) {
-      return config.startingStack;
-    }
-    return Math.min(Math.max(value, config.minBuyIn), config.maxBuyIn);
-  }
-
   private toSummary(room: ManagedRoom): RoomSummary {
     const summary: RoomSummary = {
       roomId: room.roomId,
@@ -278,6 +279,7 @@ export class RoomManager {
   private toSnapshot(room: ManagedRoom): RoomSnapshot {
     const snapshot: RoomSnapshot = {
       roomId: room.roomId,
+      gameType: room.gameType,
       config: room.config,
       summary: room.summary,
       roomAgentCardUrl: room.roomAgent.cardUrl,
@@ -288,7 +290,7 @@ export class RoomManager {
   }
 
   private async maybeAutoStart(room: ManagedRoom): Promise<void> {
-    if (!room.config.maxSeats) {
+    if (!room.definition.shouldAutoStart) {
       return;
     }
     if (!room.summary) {
@@ -297,7 +299,11 @@ export class RoomManager {
     if (room.summary.status === 'running') {
       return;
     }
-    if (room.summary.players.length < room.config.maxSeats) {
+    const shouldStart = room.definition.shouldAutoStart({
+      summary: room.summary,
+      config: room.config,
+    });
+    if (!shouldStart) {
       return;
     }
 
@@ -327,6 +333,14 @@ export class RoomManager {
       throw new Error(`Room ${roomId} not found.`);
     }
     return room;
+  }
+
+  private requireGame(gameType: string): RoomGameDefinition {
+    const game = this.games.get(gameType);
+    if (!game) {
+      throw new Error(`Unsupported game type: ${gameType}.`);
+    }
+    return game;
   }
 
   private findRoomById(roomId: string): ManagedRoom | undefined {
