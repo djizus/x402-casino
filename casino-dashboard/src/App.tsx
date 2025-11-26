@@ -20,6 +20,7 @@ const defaultCreateForm = {
   roomId: '',
   tableId: '',
   tableAgentCardUrl: DEFAULT_TABLE_AGENT_CARD_URL,
+  tablePort: '',
   startingStack: '1',
   smallBlind: '0.1',
   bigBlind: '1',
@@ -124,6 +125,7 @@ export function App() {
         roomId: createForm.roomId.trim() || undefined,
         tableId: createForm.tableId.trim() || undefined,
         tableAgentCardUrl: createForm.tableAgentCardUrl.trim() || undefined,
+        tablePort: createForm.tablePort.trim() ? Number(createForm.tablePort) : undefined,
         startingStack: Number(createForm.startingStack),
         smallBlind: Number(createForm.smallBlind),
         bigBlind: Number(createForm.bigBlind),
@@ -222,6 +224,7 @@ export function App() {
                   {room.status}
                 </div>
                 <div>{room.playerCount} players · {room.handCount} hands</div>
+                {room.tableBaseUrl && <small>{room.tableBaseUrl}</small>}
                 {room.message && <small>{room.message}</small>}
               </button>
             ))
@@ -257,10 +260,18 @@ export function App() {
               <label htmlFor="tableAgentCardUrl">Table Agent Card URL</label>
               <input
                 id="tableAgentCardUrl"
-                required
                 value={createForm.tableAgentCardUrl}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, tableAgentCardUrl: e.target.value }))}
-                placeholder="http://localhost:4500/.well-known/agent-card.json"
+                placeholder="Auto-spawn (optional override)"
+              />
+            </div>
+            <div>
+              <label htmlFor="tablePort">Table Port</label>
+              <input
+                id="tablePort"
+                value={createForm.tablePort}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, tablePort: e.target.value }))}
+                placeholder="Auto-select"
               />
             </div>
             {(['startingStack', 'smallBlind', 'bigBlind', 'minBuyIn', 'maxBuyIn', 'maxHands'] as const).map((key) => (
@@ -323,6 +334,18 @@ export function App() {
                 <strong>
                   {formatAmount(roomSnapshot.config.minBuyIn)} - {formatAmount(roomSnapshot.config.maxBuyIn)}
                 </strong>
+              </div>
+              {roomSnapshot.tableBaseUrl && (
+                <div>
+                  <div>Table Endpoint</div>
+                  <a href={roomSnapshot.tableBaseUrl} target="_blank" rel="noreferrer">
+                    {roomSnapshot.tableBaseUrl}
+                  </a>
+                </div>
+              )}
+              <div>
+                <div>Agent Card</div>
+                <small>{roomSnapshot.tableAgentCardUrl}</small>
               </div>
             </div>
             <p>{roomSnapshot.summary?.message || 'No recent activity.'}</p>

@@ -16,6 +16,12 @@ body {
   padding: 1.5rem;
 }
 
+a {
+  color: #a5b4fc;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
 h1 {
   margin: 0 0 0.35rem;
   font-size: 2rem;

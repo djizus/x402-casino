@@ -42,6 +42,7 @@ export type RoomSummary = {
   tableId: string;
   gameType: string;
   tableAgentCardUrl: string;
+  tableBaseUrl?: string;
   status: 'waiting' | 'running' | 'idle' | 'error';
   handCount: number;
   playerCount: number;
@@ -53,6 +54,7 @@ export type RoomSnapshot = {
   config: TableConfig;
   summary?: TableSummary;
   tableAgentCardUrl: string;
+  tableBaseUrl?: string;
   events: TableEvent[];
 };
 
@@ -65,6 +67,7 @@ export type CreateRoomPayload = {
   roomId?: string;
   tableId?: string;
   tableAgentCardUrl?: string;
+  tablePort?: number;
   startingStack: number;
   smallBlind: number;
   bigBlind: number;

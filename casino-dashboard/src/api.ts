@@ -32,10 +32,25 @@ export const fetchRoomSnapshot = async (roomId: string): Promise<RoomSnapshot> =
 };
 
 export const createRoom = async (input: CreateRoomPayload) => {
+  const body: Record<string, unknown> = {
+    roomId: input.roomId || undefined,
+    tableId: input.tableId || undefined,
+    tableAgentCardUrl: input.tableAgentCardUrl || undefined,
+    startingStack: input.startingStack,
+    smallBlind: input.smallBlind,
+    bigBlind: input.bigBlind,
+    minBuyIn: input.minBuyIn,
+    maxBuyIn: input.maxBuyIn,
+    maxHands: input.maxHands,
+  };
+  if (typeof input.tablePort === 'number') {
+    body.launchOptions = { port: input.tablePort };
+  }
+
   const res = await fetch(`${BASE_URL}/ui/rooms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   });
   const data = await toJson(res);
   return data.room;

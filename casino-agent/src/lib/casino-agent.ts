@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { createAgent } from '@lucid-agents/core';
 import { http } from '@lucid-agents/http';
 import { a2a } from '@lucid-agents/a2a';
@@ -20,6 +22,7 @@ import {
   casinoStateSchema,
 } from './protocol';
 import { RoomManager, type CasinoRuntime } from './room-manager';
+import { TableLauncher } from './table-launcher';
 
 const toNumber = (value: string | undefined, fallback: number): number => {
   if (!value) {
@@ -27,6 +30,16 @@ const toNumber = (value: string | undefined, fallback: number): number => {
   }
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const parseArgs = (value: string | undefined, fallback: string[]): string[] => {
+  if (!value) {
+    return fallback;
+  }
+  return value
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 };
 
 const casinoName = process.env.CASINO_AGENT_NAME ?? 'casino-agent';
@@ -46,6 +59,24 @@ const defaultConfig = tableConfigSchema.parse({
   minBuyIn: toNumber(process.env.MIN_BUY_IN, 0.1),
   maxBuyIn: toNumber(process.env.MAX_BUY_IN, 1),
 });
+
+const embeddedWorkdir =
+  process.env.TABLE_AGENT_WORKDIR ?? resolve(new URL('../../../poker-table-agent', import.meta.url).pathname);
+const enableTableLauncher = process.env.TABLE_AGENT_AUTOSPAWN !== 'false';
+const tableAgentBin = process.env.TABLE_AGENT_BIN ?? 'bun';
+const tableAgentArgs = parseArgs(process.env.TABLE_AGENT_ARGS, ['run', 'src/index.ts']);
+const portRangeStart = Number.parseInt(process.env.TABLE_AGENT_PORT_START ?? '4500', 10);
+const portRangeEnd = Number.parseInt(process.env.TABLE_AGENT_PORT_END ?? '4600', 10);
+
+const tableLauncher = enableTableLauncher
+  ? new TableLauncher({
+      workdir: embeddedWorkdir,
+      bin: tableAgentBin,
+      args: tableAgentArgs,
+      portRangeStart,
+      portRangeEnd,
+    })
+  : undefined;
 
 const runtime = await createAgent({
   name: casinoName,
@@ -68,7 +99,30 @@ const roomManager = new RoomManager(
     agentCardUrl: casinoCardUrl,
     eventSkill: 'recordGameEvent',
   },
+  {
+    tableLauncher,
+  },
 );
+
+const gracefulShutdown = async () => {
+  try {
+    await roomManager.shutdown();
+  } catch (error) {
+    console.error('[casino-agent] Failed to shutdown rooms', error);
+  }
+};
+
+process.on('SIGINT', async () => {
+  await gracefulShutdown();
+  process.exit(0);
+});
+process.on('SIGTERM', async () => {
+  await gracefulShutdown();
+  process.exit(0);
+});
+process.on('exit', () => {
+  roomManager.shutdown().catch(() => undefined);
+});
 
 const listRooms = (): CasinoState =>
   casinoStateSchema.parse({
@@ -86,13 +140,9 @@ addEntrypoint({
   input: createRoomInputSchema,
   output: roomSnapshotSchema,
   handler: async (ctx) => {
-    const tableAgentCardUrl = ctx.input.tableAgentCardUrl ?? defaultTableAgentCardUrl;
-    if (!tableAgentCardUrl) {
-      throw new Error('A tableAgentCardUrl must be provided via input or DEFAULT_TABLE_AGENT_CARD_URL.');
-    }
     const room = await roomManager.createRoom({
       ...ctx.input,
-      tableAgentCardUrl,
+      tableAgentCardUrl: ctx.input.tableAgentCardUrl ?? defaultTableAgentCardUrl,
     });
     return { output: room };
   },
@@ -154,13 +204,9 @@ app.post('/ui/rooms', async (c) => {
       config: defaultConfig,
       ...payload,
     });
-    const tableAgentCardUrl = parsed.tableAgentCardUrl ?? defaultTableAgentCardUrl;
-    if (!tableAgentCardUrl) {
-      throw new Error('DEFAULT_TABLE_AGENT_CARD_URL is not set and tableAgentCardUrl was not provided.');
-    }
     const room = await roomManager.createRoom({
       ...parsed,
-      tableAgentCardUrl,
+      tableAgentCardUrl: parsed.tableAgentCardUrl ?? defaultTableAgentCardUrl,
     });
     return c.json({ ok: true, room });
   } catch (error) {

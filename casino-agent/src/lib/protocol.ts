@@ -67,6 +67,7 @@ export const roomSummarySchema = z.object({
   tableId: z.string(),
   gameType: z.literal('poker'),
   tableAgentCardUrl: z.string().url(),
+  tableBaseUrl: z.string().url().optional(),
   status: z.enum(['waiting', 'running', 'idle', 'error']),
   handCount: z.number().int().nonnegative(),
   playerCount: z.number().int().nonnegative(),
@@ -79,6 +80,7 @@ export const roomSnapshotSchema = z.object({
   config: tableConfigSchema,
   summary: tableSummarySchema.optional(),
   tableAgentCardUrl: z.string().url(),
+  tableBaseUrl: z.string().url().optional(),
   events: z.array(tableEventSchema),
 });
 export type RoomSnapshot = z.infer<typeof roomSnapshotSchema>;
@@ -109,6 +111,11 @@ export const createRoomInputSchema = z.object({
     maxBuyIn: 1,
     maxHands: 1,
   }),
+  launchOptions: z
+    .object({
+      port: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 export type CreateRoomInput = z.infer<typeof createRoomInputSchema>;
 

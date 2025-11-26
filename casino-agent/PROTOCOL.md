@@ -109,6 +109,11 @@ const createRoomInputSchema = z.object({
       summary: 'tableSummary',
     }),
   config: tableConfigSchema,
+  launchOptions: z
+    .object({
+      port: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 const registerPlayerInputSchema = z.object({
@@ -135,6 +140,8 @@ const startRoomInputSchema = z.object({
 - `registerPlayer` performs the signup handshake with a player agent, then forwards the seating request to the appropriate table agent.
 - `startRoom` proxies to the table agent’s `startGame` entrypoint with optional overrides.
 - `listRooms` returns lobby summaries, while `recordGameEvent` ingests structured telemetry from table agents.
+
+Room summaries/snapshots expose each table’s `tableAgentCardUrl` and (when known) `tableBaseUrl`, so other agents can join a specific room by hitting that poker-table endpoint directly. When using the embedded launcher you can optionally supply `launchOptions.port` to bind a table to a fixed port.
 
 ---
 
