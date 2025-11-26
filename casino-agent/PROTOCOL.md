@@ -142,7 +142,7 @@ const startRoomInputSchema = z.object({
 - `startRoom` proxies to the table agent’s `startGame` entrypoint with optional overrides.
 - `listRooms` returns lobby summaries, while `recordGameEvent` ingests structured telemetry from table agents.
 
-Room summaries/snapshots expose each table’s `tableAgentCardUrl` and (when known) `tableBaseUrl`, so other agents can join a specific room by hitting that poker-table endpoint directly. When using the embedded launcher you can optionally supply `launchOptions.port` to bind a table to a fixed port.
+When `config.maxSeats` players are registered (and the table isn’t already running), the lobby automatically starts that room. Rooms created via the embedded launcher can also specify `launchOptions.port` to pin the spawned poker-table agent to a stable TCP port. Room summaries/snapshots expose each table’s `tableAgentCardUrl` and (when known) `tableBaseUrl`, so other agents can join a specific room by hitting that poker-table endpoint directly.
 
 ---
 

@@ -69,10 +69,9 @@ Each player folder is a standalone Lucid project, so others can clone one templa
    Point the casino at each player’s agent card URL (e.g. `http://localhost:4101/.well-known/agent-card.json`). Registration is scoped to a room and can be done via the dashboard form or by calling the lobby’s `registerPlayer` entrypoint with `roomId`.
 
 5. **Create a Room & Start Hands**
-   - From the dashboard, create a room by supplying a `tableAgentCardUrl` (or rely on the default env). This invokes the casino’s `createRoom` entrypoint which configures the poker-table agent.
+   - From the dashboard, create a room by supplying a `tableAgentCardUrl` (or rely on auto-spawn) plus a `maxSeats` value (2–10). This invokes the casino’s `createRoom` entrypoint which configures the poker-table agent.
    - Each room receives its own poker-table endpoint (unique port) plus an agent card URL. The room list (`GET /ui/rooms`) shows both so agents can decide where to sit.
-   - Register at least two players to that room.
-   - Use the “Room Controls” form or call `/entrypoints/startRoom/invoke` with `{ roomId, overrides? }`.
+   - Register players until all seats are filled; the casino will automatically start the room when `maxSeats` is reached. You can still use the “Room Controls” form or call `/entrypoints/startRoom/invoke` manually if you want to start early or rerun later.
    - The poker-table agent drives gameplay via A2A, and the casino displays its events in the Activity feed.
 
 ## Building Your Own Player
@@ -90,7 +89,7 @@ Refer to `casino-agent/PROTOCOL.md` (or the copies inside each player project) f
 The lobby exposes:
 
 - `GET /ui/rooms` – Lobby summary (`rooms`, `defaultConfig`)
-- `POST /ui/rooms` – Create a room. Body `{ roomId?, tableId?, tableAgentCardUrl?, startingStack, ... }`
+- `POST /ui/rooms` – Create a room. Body `{ roomId?, tableId?, tableAgentCardUrl?, launchOptions?, startingStack, …, maxSeats }`
 - `GET /ui/rooms/:roomId` – Live snapshot of a specific room
 - `POST /ui/rooms/:roomId/register` – Register a player to that room
 - `POST /ui/rooms/:roomId/start` – Start hands with optional overrides (`maxHands`, `smallBlind`, `bigBlind`)
@@ -103,7 +102,7 @@ Entry points mirror these capabilities:
 - `listRooms`
 - `recordGameEvent` (callback for poker-table agents)
 
-Responses from `listRooms`/`/ui/rooms` include each room’s `tableAgentCardUrl` and (when auto-spawned) `tableBaseUrl`, so other agents or tools can talk to a specific table endpoint directly. When creating rooms programmatically you can also supply `launchOptions.port` to pin a table to a specific port.
+Responses from `listRooms`/`/ui/rooms` include each room’s `tableAgentCardUrl` and (when auto-spawned) `tableBaseUrl`, so other agents or tools can talk to a specific table endpoint directly. When creating rooms programmatically you can also supply `launchOptions.port` to pin a table to a specific port. Once a room has `maxSeats` players registered, the casino automatically invokes `startRoom` so play begins immediately.
 
 Each poker-table agent exposes its own card with entrypoints (`configureTable`, `registerPlayer`, `startGame`, `tableSummary`) and only communicates with the casino via A2A.
 

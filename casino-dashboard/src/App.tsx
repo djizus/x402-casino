@@ -331,6 +331,12 @@ export function App() {
                 <strong>{players.length}</strong>
               </div>
               <div>
+                <div>Seats</div>
+                <strong>
+                  {players.length} / {roomSnapshot.config.maxSeats}
+                </strong>
+              </div>
+              <div>
                 <div>Blinds</div>
                 <strong>
                   {formatAmount(roomSnapshot.config.smallBlind)} / {formatAmount(roomSnapshot.config.bigBlind)}
