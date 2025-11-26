@@ -3,7 +3,6 @@ export type PlayerSeat = {
   seatNumber: number;
   displayName: string;
   stack: number;
-  actionSkill: string;
 };
 
 export type TableSummary = {
@@ -14,8 +13,7 @@ export type TableSummary = {
   message?: string;
 };
 
-export type GameConfig = {
-  tableId: string;
+export type TableConfig = {
   startingStack: number;
   smallBlind: number;
   bigBlind: number;
@@ -24,10 +22,55 @@ export type GameConfig = {
   maxHands: number;
 };
 
-export type CasinoState = {
-  summary: TableSummary;
-  config: GameConfig;
-  events: string[];
+export type TableEvent = {
+  tableId: string;
+  eventType:
+    | 'player_registered'
+    | 'hand_started'
+    | 'action_taken'
+    | 'hand_completed'
+    | 'player_busted'
+    | 'table_error'
+    | 'table_status';
+  message: string;
+  timestamp: string;
+  payload?: Record<string, unknown>;
+};
+
+export type RoomSummary = {
+  roomId: string;
+  tableId: string;
+  gameType: string;
+  tableAgentCardUrl: string;
+  status: 'waiting' | 'running' | 'idle' | 'error';
+  handCount: number;
+  playerCount: number;
+  message?: string;
+};
+
+export type RoomSnapshot = {
+  roomId: string;
+  config: TableConfig;
+  summary?: TableSummary;
+  tableAgentCardUrl: string;
+  events: TableEvent[];
+};
+
+export type LobbyState = {
+  rooms: RoomSummary[];
+  defaultConfig: TableConfig;
+};
+
+export type CreateRoomPayload = {
+  roomId?: string;
+  tableId?: string;
+  tableAgentCardUrl?: string;
+  startingStack: number;
+  smallBlind: number;
+  bigBlind: number;
+  minBuyIn: number;
+  maxBuyIn: number;
+  maxHands: number;
 };
 
 export type RegisterPayload = {
@@ -37,11 +80,8 @@ export type RegisterPayload = {
   preferredSeat?: number;
 };
 
-export type StartGamePayload = {
-  startingStack: number;
-  smallBlind: number;
-  bigBlind: number;
-  minBuyIn: number;
-  maxBuyIn: number;
-  maxHands: number;
+export type StartRoomPayload = {
+  maxHands?: number;
+  smallBlind?: number;
+  bigBlind?: number;
 };

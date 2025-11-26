@@ -5,16 +5,21 @@ import { createAgentApp } from '@lucid-agents/hono';
 import { cors } from 'hono/cors';
 
 import {
+  CasinoState,
+  CreateRoomInput,
   RegisterPlayerInput,
-  StartGameInput,
+  StartRoomInput,
+  createRoomInputSchema,
   registerPlayerInputSchema,
   registerPlayerResultSchema,
-  startGameInputSchema,
+  roomSnapshotSchema,
+  startRoomInputSchema,
+  tableConfigSchema,
+  tableEventSchema,
   tableSummarySchema,
-  playerSignupResponseSchema,
-} from '../../../shared/poker/types';
-
-import { CasinoTable } from './casino-state';
+  casinoStateSchema,
+} from './protocol';
+import { RoomManager, type CasinoRuntime } from './room-manager';
 
 const toNumber = (value: string | undefined, fallback: number): number => {
   if (!value) {
@@ -24,10 +29,16 @@ const toNumber = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const defaultTableId = process.env.TABLE_ID ?? 'casino-table-1';
+const casinoName = process.env.CASINO_AGENT_NAME ?? 'casino-agent';
+const casinoCardUrl = process.env.CASINO_AGENT_CARD_URL;
 
-const initialConfig = startGameInputSchema.parse({
-  tableId: defaultTableId,
+if (!casinoCardUrl) {
+  throw new Error('CASINO_AGENT_CARD_URL must be set so table agents can send events back to the casino.');
+}
+
+const defaultTableAgentCardUrl = process.env.DEFAULT_TABLE_AGENT_CARD_URL;
+
+const defaultConfig = tableConfigSchema.parse({
   startingStack: toNumber(process.env.STARTING_STACK, 1),
   smallBlind: toNumber(process.env.SMALL_BLIND, 0.1),
   bigBlind: toNumber(process.env.BIG_BLIND, 1),
@@ -36,145 +47,185 @@ const initialConfig = startGameInputSchema.parse({
   maxBuyIn: toNumber(process.env.MAX_BUY_IN, 1),
 });
 
-const casinoName = process.env.CASINO_AGENT_NAME ?? 'casino-agent';
-
 const runtime = await createAgent({
   name: casinoName,
-  version: process.env.CASINO_AGENT_VERSION ?? '0.1.0',
+  version: process.env.CASINO_AGENT_VERSION ?? '0.2.0',
   description:
     process.env.CASINO_AGENT_DESCRIPTION ??
-    'Casino agent that coordinates Texas Hold\'em hands between Lucid agents.',
+    'Casino lobby agent that orchestrates poker rooms and coordinates player registrations.',
 })
   .use(http())
   .use(a2a())
   .build();
 
 const { app, addEntrypoint } = await createAgentApp(runtime);
-
 app.use('*', cors());
 
-const table = new CasinoTable(runtime, defaultTableId, casinoName);
-let currentConfig: StartGameInput = initialConfig;
+const roomManager = new RoomManager(
+  runtime as CasinoRuntime,
+  casinoName,
+  {
+    agentCardUrl: casinoCardUrl,
+    eventSkill: 'recordGameEvent',
+  },
+);
 
-const ensureA2A = () => {
-  if (!runtime.a2a) {
-    throw new Error('Casino agent needs the a2a extension to register players.');
-  }
-  return runtime.a2a;
-};
-
-const clampBuyIn = (value: number | undefined): number => {
-  const amount = typeof value === 'number' && Number.isFinite(value) ? value : currentConfig.startingStack;
-  return Math.min(Math.max(amount, currentConfig.minBuyIn), currentConfig.maxBuyIn);
-};
-
-const registerPlayerToTable = async (rawInput: unknown) => {
-  const input: RegisterPlayerInput = registerPlayerInputSchema.parse(rawInput ?? {});
-  const a2aRuntime = ensureA2A();
-  const card = await a2aRuntime.fetchCard(input.agentCardUrl);
-
-  const invitation = table.buildSignupInvitation(currentConfig);
-  const signupResult = await a2aRuntime.client.invoke(card, input.signupSkill ?? 'signup', invitation);
-  const signup = playerSignupResponseSchema.parse(signupResult.output ?? {});
-  const buyIn = clampBuyIn(signup.buyIn);
-
-  return table.registerPlayer({
-    card,
-    actionSkill: input.actionSkill ?? signup.actionSkill,
-    displayName: signup.displayName,
-    agentCardUrl: input.agentCardUrl,
-    preferredSeat: input.preferredSeat,
-    startingStack: buyIn,
-  });
-};
-
-const startHandsWithConfig = async (rawInput?: unknown) => {
-  const overrides = startGameInputSchema.parse({
-    ...currentConfig,
-    ...(rawInput ?? {}),
-    tableId: table.id,
+const listRooms = (): CasinoState =>
+  casinoStateSchema.parse({
+    rooms: roomManager.listRooms(),
   });
 
-  currentConfig = overrides;
-  return table.startGame(currentConfig);
+const fetchLobbyState = async (): Promise<CasinoState> => {
+  await roomManager.refreshAllRooms();
+  return listRooms();
 };
+
+addEntrypoint({
+  key: 'createRoom',
+  description: 'Create a new poker room and bind a table agent to it.',
+  input: createRoomInputSchema,
+  output: roomSnapshotSchema,
+  handler: async (ctx) => {
+    const tableAgentCardUrl = ctx.input.tableAgentCardUrl ?? defaultTableAgentCardUrl;
+    if (!tableAgentCardUrl) {
+      throw new Error('A tableAgentCardUrl must be provided via input or DEFAULT_TABLE_AGENT_CARD_URL.');
+    }
+    const room = await roomManager.createRoom({
+      ...ctx.input,
+      tableAgentCardUrl,
+    });
+    return { output: room };
+  },
+});
 
 addEntrypoint({
   key: 'registerPlayer',
-  description: 'Register an external agent to the casino table using A2A.',
+  description: 'Register an external agent to a specific room via A2A.',
   input: registerPlayerInputSchema,
   output: registerPlayerResultSchema,
   handler: async (ctx) => {
-    const registered = await registerPlayerToTable(ctx.input);
-    return {
-      output: registered,
-    };
+    const result = await roomManager.registerPlayer(ctx.input);
+    return { output: result };
   },
 });
 
 addEntrypoint({
-  key: 'startGame',
-  description: 'Start running one or more hands with the current roster.',
-  input: startGameInputSchema,
+  key: 'startRoom',
+  description: 'Start one or more hands for a specific room.',
+  input: startRoomInputSchema,
   output: tableSummarySchema,
   handler: async (ctx) => {
-    const summary = await startHandsWithConfig(ctx.input);
-
-    return {
-      output: summary,
-    };
+    const summary = await roomManager.startRoom(ctx.input);
+    return { output: summary };
   },
 });
 
 addEntrypoint({
-  key: 'tableSummary',
-  description: 'Inspect the table status and registered players.',
-  output: tableSummarySchema,
+  key: 'recordGameEvent',
+  description: 'Receive activity emitted by poker-table agents.',
+  input: tableEventSchema,
+  handler: async (ctx) => {
+    await roomManager.recordEvent(ctx.input);
+    return { output: { ok: true } };
+  },
+});
+
+addEntrypoint({
+  key: 'listRooms',
+  description: 'Return lobby overview.',
+  output: casinoStateSchema,
   handler: async () => ({
-    output: table.getSummary(),
+    output: await fetchLobbyState(),
   }),
 });
 
-app.get('/ui/state', (c) =>
-  c.json({
-    summary: table.getSummary(),
-    config: currentConfig,
-    events: table.getEvents(),
-  }),
-);
+app.get('/ui/rooms', async (c) => {
+  const state = await fetchLobbyState();
+  return c.json({
+    ...state,
+    defaultConfig,
+  });
+});
 
-app.post('/ui/register', async (c) => {
+app.post('/ui/rooms', async (c) => {
   try {
     const payload = await c.req.json();
-    const player = await registerPlayerToTable(payload);
+    const parsed = createRoomInputSchema.parse({
+      config: defaultConfig,
+      ...payload,
+    });
+    const tableAgentCardUrl = parsed.tableAgentCardUrl ?? defaultTableAgentCardUrl;
+    if (!tableAgentCardUrl) {
+      throw new Error('DEFAULT_TABLE_AGENT_CARD_URL is not set and tableAgentCardUrl was not provided.');
+    }
+    const room = await roomManager.createRoom({
+      ...parsed,
+      tableAgentCardUrl,
+    });
+    return c.json({ ok: true, room });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : 'Failed to create room.' },
+      400,
+    );
+  }
+});
+
+app.get('/ui/rooms/:roomId', async (c) => {
+  try {
+    const roomId = c.req.param('roomId');
+    const snapshot = await roomManager.refreshRoom(roomId);
+    return c.json({ ok: true, room: snapshot });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : 'Room not found.' },
+      404,
+    );
+  }
+});
+
+app.post('/ui/rooms/:roomId/register', async (c) => {
+  try {
+    const roomId = c.req.param('roomId');
+    const payload = await c.req.json();
+    const input: RegisterPlayerInput = registerPlayerInputSchema.parse({
+      roomId,
+      ...payload,
+    });
+    const player = await roomManager.registerPlayer(input);
     return c.json({ ok: true, player });
   } catch (error) {
     return c.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Failed to register player.',
-      },
+      { ok: false, error: error instanceof Error ? error.message : 'Failed to register player.' },
       400,
     );
   }
 });
 
-app.post('/ui/start', async (c) => {
+app.post('/ui/rooms/:roomId/start', async (c) => {
   try {
+    const roomId = c.req.param('roomId');
     const payload = await c.req.json().catch(() => ({}));
-    const summary = await startHandsWithConfig(payload);
+    const input: StartRoomInput = startRoomInputSchema.parse({
+      roomId,
+      overrides: payload,
+    });
+    const summary = await roomManager.startRoom(input);
     return c.json({ ok: true, summary });
   } catch (error) {
     return c.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Failed to start game.',
-      },
+      { ok: false, error: error instanceof Error ? error.message : 'Failed to start room.' },
       400,
     );
   }
 });
 
+app.get('/ui/state', async (c) => {
+  const state = await fetchLobbyState();
+  return c.json({
+    ...state,
+    defaultConfig,
+  });
+});
+
 export { app };
-
-

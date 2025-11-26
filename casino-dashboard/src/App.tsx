@@ -1,9 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
-import { fetchCasinoState, registerPlayer, startGame } from './api';
-import type { CasinoState } from './types';
+import { createRoom, fetchLobbyState, fetchRoomSnapshot, registerPlayer, startRoom } from './api';
+import type { LobbyState, RoomSnapshot, TableEvent } from './types';
 
 const POLL_INTERVAL = Number(import.meta.env.VITE_POLL_INTERVAL ?? 4000);
+const DEFAULT_TABLE_AGENT_CARD_URL = import.meta.env.VITE_TABLE_AGENT_CARD_URL ?? '';
 
 const formatAmount = (value: number | undefined) => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -15,6 +16,18 @@ const formatAmount = (value: number | undefined) => {
   });
 };
 
+const defaultCreateForm = {
+  roomId: '',
+  tableId: '',
+  tableAgentCardUrl: DEFAULT_TABLE_AGENT_CARD_URL,
+  startingStack: '1',
+  smallBlind: '0.1',
+  bigBlind: '1',
+  minBuyIn: '0.1',
+  maxBuyIn: '1',
+  maxHands: '1',
+};
+
 const defaultRegisterForm = {
   agentCardUrl: '',
   signupSkill: '',
@@ -22,87 +35,167 @@ const defaultRegisterForm = {
   preferredSeat: '',
 };
 
+const defaultStartForm = {
+  maxHands: '',
+  smallBlind: '',
+  bigBlind: '',
+};
+
 export function App() {
-  const [casinoState, setCasinoState] = useState<CasinoState | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [lobby, setLobby] = useState<LobbyState | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string>('');
+  const [roomSnapshot, setRoomSnapshot] = useState<RoomSnapshot | null>(null);
+  const [loadingLobby, setLoadingLobby] = useState(true);
+  const [loadingRoom, setLoadingRoom] = useState(false);
+  const [createForm, setCreateForm] = useState(defaultCreateForm);
   const [registerForm, setRegisterForm] = useState(defaultRegisterForm);
+  const [startForm, setStartForm] = useState(defaultStartForm);
+  const [createToast, setCreateToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [registerToast, setRegisterToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [startToast, setStartToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  const [startConfig, setStartConfig] = useState({
-    startingStack: 1,
-    smallBlind: 0.1,
-    bigBlind: 1,
-    minBuyIn: 0.1,
-    maxBuyIn: 1,
-    maxHands: 1,
-  });
+  const [createInitialized, setCreateInitialized] = useState(false);
 
-  const refresh = useCallback(async () => {
-    const data = await fetchCasinoState();
-    setCasinoState(data);
-    setStartConfig({
-      startingStack: data.config.startingStack,
-      smallBlind: data.config.smallBlind,
-      bigBlind: data.config.bigBlind,
-      minBuyIn: data.config.minBuyIn,
-      maxBuyIn: data.config.maxBuyIn,
-      maxHands: data.config.maxHands,
-    });
-    setLoading(false);
-  }, []);
+  const refreshLobby = useCallback(async () => {
+    const data = await fetchLobbyState();
+    setLobby(data);
+    setLoadingLobby(false);
+
+    if (!selectedRoomId) {
+      setSelectedRoomId(data.rooms[0]?.roomId ?? '');
+    } else if (!data.rooms.some((room) => room.roomId === selectedRoomId)) {
+      setSelectedRoomId(data.rooms[0]?.roomId ?? '');
+    }
+
+    if (!createInitialized) {
+      setCreateForm((prev) => ({
+        ...prev,
+        startingStack: String(data.defaultConfig.startingStack),
+        smallBlind: String(data.defaultConfig.smallBlind),
+        bigBlind: String(data.defaultConfig.bigBlind),
+        minBuyIn: String(data.defaultConfig.minBuyIn),
+        maxBuyIn: String(data.defaultConfig.maxBuyIn),
+        maxHands: String(data.defaultConfig.maxHands),
+        tableAgentCardUrl: prev.tableAgentCardUrl || DEFAULT_TABLE_AGENT_CARD_URL,
+      }));
+      setCreateInitialized(true);
+    }
+  }, [selectedRoomId, createInitialized]);
+
+  const refreshRoom = useCallback(
+    async (roomId: string) => {
+      if (!roomId) {
+        setRoomSnapshot(null);
+        return;
+      }
+      setLoadingRoom(true);
+      try {
+        const snapshot = await fetchRoomSnapshot(roomId);
+        setRoomSnapshot(snapshot);
+      } finally {
+        setLoadingRoom(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    refresh();
-    const timer = setInterval(refresh, POLL_INTERVAL);
+    refreshLobby();
+    const timer = setInterval(refreshLobby, POLL_INTERVAL);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refreshLobby]);
+
+  useEffect(() => {
+    if (!selectedRoomId) {
+      setRoomSnapshot(null);
+      return;
+    }
+    refreshRoom(selectedRoomId);
+    const timer = setInterval(() => {
+      refreshRoom(selectedRoomId);
+    }, POLL_INTERVAL);
+    return () => clearInterval(timer);
+  }, [selectedRoomId, refreshRoom]);
+
+  const handleCreateRoom = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCreateToast(null);
+    try {
+      const payload = {
+        roomId: createForm.roomId.trim() || undefined,
+        tableId: createForm.tableId.trim() || undefined,
+        tableAgentCardUrl: createForm.tableAgentCardUrl.trim() || undefined,
+        startingStack: Number(createForm.startingStack),
+        smallBlind: Number(createForm.smallBlind),
+        bigBlind: Number(createForm.bigBlind),
+        minBuyIn: Number(createForm.minBuyIn),
+        maxBuyIn: Number(createForm.maxBuyIn),
+        maxHands: Number(createForm.maxHands),
+      };
+      const room = await createRoom(payload);
+      setCreateToast({ kind: 'success', text: `Created room ${room.roomId}.` });
+      setSelectedRoomId(room.roomId);
+      setCreateForm(defaultCreateForm);
+      setCreateInitialized(false);
+      refreshLobby();
+    } catch (error) {
+      setCreateToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to create room.' });
+    }
+  };
 
   const handleRegister = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!selectedRoomId) {
+      setRegisterToast({ kind: 'error', text: 'Select a room first.' });
+      return;
+    }
     setRegisterToast(null);
     try {
       const payload: any = {
-        agentCardUrl: registerForm.agentCardUrl,
+        agentCardUrl: registerForm.agentCardUrl.trim(),
       };
       if (registerForm.signupSkill.trim()) payload.signupSkill = registerForm.signupSkill.trim();
       if (registerForm.actionSkill.trim()) payload.actionSkill = registerForm.actionSkill.trim();
       if (registerForm.preferredSeat.trim()) payload.preferredSeat = Number(registerForm.preferredSeat);
-      await registerPlayer(payload);
+      await registerPlayer(selectedRoomId, payload);
       setRegisterToast({ kind: 'success', text: 'Player registered.' });
       setRegisterForm(defaultRegisterForm);
-      refresh();
+      refreshRoom(selectedRoomId);
     } catch (error) {
       setRegisterToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to register.' });
     }
   };
 
-  const handleStartGame = async (event: FormEvent<HTMLFormElement>) => {
+  const handleStartRoom = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!selectedRoomId) {
+      setStartToast({ kind: 'error', text: 'Select a room first.' });
+      return;
+    }
     setStartToast(null);
     try {
-      await startGame({
-        startingStack: startConfig.startingStack,
-        smallBlind: startConfig.smallBlind,
-        bigBlind: startConfig.bigBlind,
-        minBuyIn: startConfig.minBuyIn,
-        maxBuyIn: startConfig.maxBuyIn,
-        maxHands: startConfig.maxHands,
-      });
-      setStartToast({ kind: 'success', text: 'Game started.' });
-      refresh();
+      const payload: any = {};
+      if (startForm.maxHands.trim()) payload.maxHands = Number(startForm.maxHands);
+      if (startForm.smallBlind.trim()) payload.smallBlind = Number(startForm.smallBlind);
+      if (startForm.bigBlind.trim()) payload.bigBlind = Number(startForm.bigBlind);
+      await startRoom(selectedRoomId, payload);
+      setStartToast({ kind: 'success', text: 'Room started.' });
+      refreshRoom(selectedRoomId);
     } catch (error) {
-      setStartToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to start game.' });
+      setStartToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to start room.' });
     }
   };
 
-  const players = casinoState?.summary.players ?? [];
-  const events = useMemo(() => casinoState?.events ?? [], [casinoState]);
+  const players = roomSnapshot?.summary?.players ?? [];
+  const events = useMemo<TableEvent[]>(() => {
+    const items = roomSnapshot?.events ?? [];
+    return items.slice(-50).reverse();
+  }, [roomSnapshot]);
 
-  if (loading) {
+  if (loadingLobby) {
     return (
       <main>
         <div className="card">
-          <p>Loading casino state…</p>
+          <p>Loading casino lobby…</p>
         </div>
       </main>
     );
@@ -111,39 +204,132 @@ export function App() {
   return (
     <main>
       <section className="card">
-        <h1>Lucid Casino</h1>
-        <p>
-          Table <strong>{casinoState?.summary.tableId}</strong>
-        </p>
-        <div className="grid">
-          <div>
-            <div>Status</div>
-            <div className="status-pill" data-status={casinoState?.summary.status}>
-              {casinoState?.summary.status}
-            </div>
-          </div>
-          <div>
-            <div>Hands Played</div>
-            <strong>{casinoState?.summary.handCount ?? 0}</strong>
-          </div>
-          <div>
-            <div>Players</div>
-            <strong>{players.length}</strong>
-          </div>
-          <div>
-            <div>Blinds</div>
-            <strong>
-              {formatAmount(casinoState?.config.smallBlind)} / {formatAmount(casinoState?.config.bigBlind)}
-            </strong>
-          </div>
-          <div>
-            <div>Buy-ins</div>
-            <strong>
-              {formatAmount(casinoState?.config.minBuyIn)} - {formatAmount(casinoState?.config.maxBuyIn)}
-            </strong>
-          </div>
+        <h1>Lucid Casino Lobby</h1>
+        <p>Manage rooms and monitor activity from one place.</p>
+        <div className="room-list">
+          {lobby?.rooms.length ? (
+            lobby.rooms.map((room) => (
+              <button
+                key={room.roomId}
+                className="room-chip"
+                data-selected={room.roomId === selectedRoomId}
+                onClick={() => setSelectedRoomId(room.roomId)}
+              >
+                <div>
+                  <strong>{room.roomId}</strong> · {room.tableId}
+                </div>
+                <div className="status-pill" data-status={room.status}>
+                  {room.status}
+                </div>
+                <div>{room.playerCount} players · {room.handCount} hands</div>
+                {room.message && <small>{room.message}</small>}
+              </button>
+            ))
+          ) : (
+            <p>No rooms yet. Create one below.</p>
+          )}
         </div>
-        <p>{casinoState?.summary.message || 'No recent activity.'}</p>
+      </section>
+
+      <section className="card">
+        <h2>Create Room</h2>
+        <form onSubmit={handleCreateRoom}>
+          <div className="grid">
+            <div>
+              <label htmlFor="roomId">Room ID</label>
+              <input
+                id="roomId"
+                value={createForm.roomId}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, roomId: e.target.value }))}
+                placeholder="Optional (auto-generated)"
+              />
+            </div>
+            <div>
+              <label htmlFor="tableId">Table ID</label>
+              <input
+                id="tableId"
+                value={createForm.tableId}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, tableId: e.target.value }))}
+                placeholder="Defaults to room ID"
+              />
+            </div>
+            <div>
+              <label htmlFor="tableAgentCardUrl">Table Agent Card URL</label>
+              <input
+                id="tableAgentCardUrl"
+                required
+                value={createForm.tableAgentCardUrl}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, tableAgentCardUrl: e.target.value }))}
+                placeholder="http://localhost:4500/.well-known/agent-card.json"
+              />
+            </div>
+            {(['startingStack', 'smallBlind', 'bigBlind', 'minBuyIn', 'maxBuyIn', 'maxHands'] as const).map((key) => (
+              <div key={key}>
+                <label htmlFor={`create-${key}`}>{key}</label>
+                <input
+                  id={`create-${key}`}
+                  type="number"
+                  step="0.01"
+                  required
+                  value={(createForm as Record<string, string>)[key]}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                />
+              </div>
+            ))}
+          </div>
+          <button type="submit">Create Room</button>
+          {createToast && (
+            <div className="toast" data-kind={createToast.kind}>
+              {createToast.text}
+            </div>
+          )}
+        </form>
+      </section>
+
+      <section className="card">
+        <h2>Room Details</h2>
+        {!selectedRoomId ? (
+          <p>Select a room to inspect details.</p>
+        ) : loadingRoom ? (
+          <p>Loading room {selectedRoomId}…</p>
+        ) : roomSnapshot ? (
+          <>
+            <p>
+              Room <strong>{roomSnapshot.roomId}</strong> · Table <strong>{roomSnapshot.summary?.tableId}</strong>
+            </p>
+            <div className="grid">
+              <div>
+                <div>Status</div>
+                <div className="status-pill" data-status={roomSnapshot.summary?.status ?? 'waiting'}>
+                  {roomSnapshot.summary?.status ?? 'waiting'}
+                </div>
+              </div>
+              <div>
+                <div>Hands Played</div>
+                <strong>{roomSnapshot.summary?.handCount ?? 0}</strong>
+              </div>
+              <div>
+                <div>Players</div>
+                <strong>{players.length}</strong>
+              </div>
+              <div>
+                <div>Blinds</div>
+                <strong>
+                  {formatAmount(roomSnapshot.config.smallBlind)} / {formatAmount(roomSnapshot.config.bigBlind)}
+                </strong>
+              </div>
+              <div>
+                <div>Buy-ins</div>
+                <strong>
+                  {formatAmount(roomSnapshot.config.minBuyIn)} - {formatAmount(roomSnapshot.config.maxBuyIn)}
+                </strong>
+              </div>
+            </div>
+            <p>{roomSnapshot.summary?.message || 'No recent activity.'}</p>
+          </>
+        ) : (
+          <p>Room not found.</p>
+        )}
       </section>
 
       <section className="card">
@@ -158,6 +344,7 @@ export function App() {
                 value={registerForm.agentCardUrl}
                 onChange={(e) => setRegisterForm((prev) => ({ ...prev, agentCardUrl: e.target.value }))}
                 placeholder="http://localhost:4101/.well-known/agent-card.json"
+                disabled={!selectedRoomId}
               />
             </div>
             <div>
@@ -167,6 +354,7 @@ export function App() {
                 value={registerForm.signupSkill}
                 onChange={(e) => setRegisterForm((prev) => ({ ...prev, signupSkill: e.target.value }))}
                 placeholder="signup"
+                disabled={!selectedRoomId}
               />
             </div>
             <div>
@@ -176,6 +364,7 @@ export function App() {
                 value={registerForm.actionSkill}
                 onChange={(e) => setRegisterForm((prev) => ({ ...prev, actionSkill: e.target.value }))}
                 placeholder="act"
+                disabled={!selectedRoomId}
               />
             </div>
             <div>
@@ -185,10 +374,13 @@ export function App() {
                 value={registerForm.preferredSeat}
                 onChange={(e) => setRegisterForm((prev) => ({ ...prev, preferredSeat: e.target.value }))}
                 placeholder="Optional"
+                disabled={!selectedRoomId}
               />
             </div>
           </div>
-          <button type="submit">Register Agent</button>
+          <button type="submit" disabled={!selectedRoomId}>
+            Register Agent
+          </button>
           {registerToast && (
             <div className="toast" data-kind={registerToast.kind}>
               {registerToast.text}
@@ -198,29 +390,27 @@ export function App() {
       </section>
 
       <section className="card">
-        <h2>Game Controls</h2>
-        <form onSubmit={handleStartGame}>
+        <h2>Room Controls</h2>
+        <form onSubmit={handleStartRoom}>
           <div className="grid">
-            {(['startingStack', 'smallBlind', 'bigBlind', 'minBuyIn', 'maxBuyIn', 'maxHands'] as const).map((key) => (
+            {(['maxHands', 'smallBlind', 'bigBlind'] as const).map((key) => (
               <div key={key}>
-                <label htmlFor={key}>{key}</label>
+                <label htmlFor={`start-${key}`}>{key}</label>
                 <input
-                  id={key}
+                  id={`start-${key}`}
                   type="number"
                   step="0.01"
-                  value={startConfig[key]}
-                  onChange={(e) =>
-                    setStartConfig((prev) => ({
-                      ...prev,
-                      [key]: e.target.value === '' ? 0 : Number(e.target.value),
-                    }))
-                  }
-                  required
+                  value={(startForm as Record<string, string>)[key]}
+                  onChange={(e) => setStartForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                  placeholder="Leave blank for defaults"
+                  disabled={!selectedRoomId}
                 />
               </div>
             ))}
           </div>
-          <button type="submit">Start Game</button>
+          <button type="submit" disabled={!selectedRoomId}>
+            Start Room
+          </button>
           {startToast && (
             <div className="toast" data-kind={startToast.kind}>
               {startToast.text}
@@ -231,7 +421,9 @@ export function App() {
 
       <section className="card">
         <h2>Players</h2>
-        {players.length === 0 ? (
+        {!selectedRoomId ? (
+          <p>Select a room.</p>
+        ) : players.length === 0 ? (
           <p>No players registered yet.</p>
         ) : (
           <table>
@@ -240,7 +432,6 @@ export function App() {
                 <th>Seat</th>
                 <th>Name</th>
                 <th>Stack</th>
-                <th>Skill</th>
               </tr>
             </thead>
             <tbody>
@@ -249,7 +440,6 @@ export function App() {
                   <td>{player.seatNumber}</td>
                   <td>{player.displayName}</td>
                   <td>{formatAmount(player.stack)}</td>
-                  <td>{player.actionSkill}</td>
                 </tr>
               ))}
             </tbody>
@@ -259,16 +449,17 @@ export function App() {
 
       <section className="card">
         <h2>Activity</h2>
-        {events.length === 0 ? (
+        {!selectedRoomId ? (
+          <p>Select a room to view activity.</p>
+        ) : events.length === 0 ? (
           <p>No events recorded.</p>
         ) : (
           <ul className="events">
-            {events
-              .slice(-50)
-              .reverse()
-              .map((event) => (
-                <li key={event}>{event}</li>
-              ))}
+            {events.map((event: TableEvent) => (
+              <li key={`${event.timestamp}-${event.message}`}>
+                <strong>{new Date(event.timestamp).toLocaleTimeString()}</strong> · {event.message}
+              </li>
+            ))}
           </ul>
         )}
       </section>

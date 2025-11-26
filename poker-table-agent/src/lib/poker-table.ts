@@ -1,60 +1,81 @@
+import type { AgentRuntime } from '@lucid-agents/types/core';
+import type { AgentCard, A2ARuntime } from '@lucid-agents/types/a2a';
 import { randomUUID } from 'crypto';
 
-import type { AgentCard, A2ARuntime } from '@lucid-agents/types/a2a';
-import type { AgentRuntime } from '@lucid-agents/types/core';
-
 import {
-  PlayerSeat,
-  RegisterPlayerResult,
-  SignupInvitation,
-  StartGameInput,
-  TableSummary,
-  BettingRound,
   Card,
+  BettingRound,
+  RegisterPlayerInput,
+  RegisterPlayerResult,
+  TableSummary,
+  StartGameInput,
+  ConfigureTableInput,
+  TableConfig,
   actionRequestSchema,
   actionResponseSchema,
   registerPlayerResultSchema,
-  signupInvitationSchema,
   tableSummarySchema,
-} from '../../../shared/poker/types';
-import { cardToString, createDeck, drawCards, shuffleDeck } from '../../../shared/poker/cards';
-import { evaluateBestHand, compareHandScores, describeHand } from '../../../shared/poker/hand-evaluator';
+  TableEvent,
+} from './protocol';
+import { cardToString, createDeck, drawCards, shuffleDeck } from './cards';
+import { compareHandScores, describeHand, evaluateBestHand } from './hand-evaluator';
 
-interface RegisteredPlayer extends PlayerSeat {
+type TableStatus = 'waiting' | 'running' | 'idle' | 'error';
+const CHIP_EPSILON = 1e-6;
+
+interface RegisteredPlayer {
+  id: string;
+  seatNumber: number;
+  displayName: string;
+  actionSkill: string;
+  agentCardUrl: string;
+  stack: number;
   card: AgentCard;
 }
 
-const statusValues = ['waiting', 'running', 'idle', 'error'] as const;
-type TableStatus = (typeof statusValues)[number];
-const CHIP_EPSILON = 1e-6;
-
-type CasinoRuntime = AgentRuntime & {
-  meta: { name: string };
+export type TableRuntime = AgentRuntime & {
   a2a?: A2ARuntime;
 };
 
-export class CasinoTable {
-  private readonly runtime: CasinoRuntime;
-  private readonly tableId: string;
-  private readonly casinoName: string;
-  private readonly players = new Map<string, RegisteredPlayer>();
+export class PokerTable {
+  private readonly runtime: TableRuntime;
+  private tableId: string;
+  private tableConfig?: TableConfig;
+  private casinoCallback?: { card: AgentCard; eventSkill: string };
+  private casinoName = 'casino-agent';
   private status: TableStatus = 'waiting';
+  private players = new Map<string, RegisteredPlayer>();
   private handCount = 0;
   private lastMessage?: string;
-  private readonly eventLog: string[] = [];
+  private readonly eventLog: TableEvent[] = [];
 
-  constructor(runtime: CasinoRuntime, tableId = 'table-1', casinoName: string) {
+  constructor(runtime: TableRuntime, tableId: string) {
     this.runtime = runtime;
     this.tableId = tableId;
-    this.casinoName = casinoName;
   }
 
-  public get id(): string {
-    return this.tableId;
+  public async configure(input: ConfigureTableInput): Promise<TableSummary> {
+    this.tableId = input.tableId;
+    this.tableConfig = input.config;
+    this.casinoName = input.casinoName;
+    const a2a = this.requireA2ARuntime();
+    const casinoCard = await a2a.fetchCard(input.casinoCallback.agentCardUrl);
+    this.casinoCallback = { card: casinoCard, eventSkill: input.casinoCallback.eventSkill };
+    this.status = 'waiting';
+    this.players.clear();
+    this.handCount = 0;
+    this.lastMessage = undefined;
+    this.eventLog.length = 0;
+
+    await this.publishEvent('table_status', `Table ${this.tableId} configured.`, {
+      casinoName: this.casinoName,
+      config: this.tableConfig,
+    });
+    return this.getSummary();
   }
 
   public getSummary(): TableSummary {
-    const summary = {
+    const summary: TableSummary = {
       tableId: this.tableId,
       status: this.status,
       players: Array.from(this.players.values())
@@ -67,85 +88,82 @@ export class CasinoTable {
         })),
       handCount: this.handCount,
       message: this.lastMessage,
-    } satisfies TableSummary;
+    };
 
     return tableSummarySchema.parse(summary);
   }
 
-  public getEvents(): string[] {
+  public getEvents(): TableEvent[] {
     return [...this.eventLog];
   }
 
-  public listPlayers(): PlayerSeat[] {
-    return Array.from(this.players.values())
-      .sort((a, b) => a.seatNumber - b.seatNumber)
-      .map((player) => ({
-        id: player.id,
-        seatNumber: player.seatNumber,
-        displayName: player.displayName,
-        actionSkill: player.actionSkill,
-        agentCardUrl: player.agentCardUrl,
-        stack: player.stack,
-      }));
-  }
-
-  public registerPlayer(params: {
-    card: AgentCard;
-    actionSkill: string;
-    displayName: string;
-    agentCardUrl: string;
-    preferredSeat?: number;
-    startingStack: number;
-  }): RegisterPlayerResult {
-    const { card, actionSkill, displayName, agentCardUrl, preferredSeat, startingStack } = params;
-    const alreadyRegistered = Array.from(this.players.values()).find(
-      (player) => player.agentCardUrl === agentCardUrl || player.displayName === displayName,
-    );
-
-    if (alreadyRegistered) {
-      throw new Error(`Player ${displayName} is already seated at this table.`);
+  public async registerPlayer(input: RegisterPlayerInput): Promise<RegisterPlayerResult> {
+    if (!this.tableConfig) {
+      throw new Error('Table is not configured.');
     }
 
-    const seatNumber = this.findSeat(preferredSeat);
-    const playerId = randomUUID();
+    const seatNumber = this.findSeat(input.preferredSeat);
+    const a2a = this.requireA2ARuntime();
+    const card = await a2a.fetchCard(input.agentCardUrl);
+
+    if (
+      this.players.has(input.playerId) ||
+      Array.from(this.players.values()).some((p) => p.agentCardUrl === input.agentCardUrl)
+    ) {
+      throw new Error(`Player ${input.displayName} is already at this table.`);
+    }
 
     const player: RegisteredPlayer = {
-      id: playerId,
+      id: input.playerId || randomUUID(),
       seatNumber,
-      displayName,
-      actionSkill,
-      agentCardUrl,
-      stack: startingStack,
+      displayName: input.displayName,
+      actionSkill: input.actionSkill,
+      agentCardUrl: input.agentCardUrl,
+      stack: input.startingStack,
       card,
     };
 
-    this.players.set(playerId, player);
+    this.players.set(player.id, player);
 
     const result: RegisterPlayerResult = {
-      playerId,
+      playerId: player.id,
       seatNumber,
-      displayName,
-      actionSkill,
+      displayName: player.displayName,
       stack: player.stack,
     };
 
-    this.recordEvent(`${displayName} joined the table (seat ${seatNumber}).`);
+    await this.publishEvent('player_registered', `${player.displayName} seated at ${seatNumber}.`, {
+      playerId: player.id,
+      seatNumber,
+      stack: player.stack,
+    });
 
     return registerPlayerResultSchema.parse(result);
   }
 
-  public async startGame(config: StartGameInput): Promise<TableSummary> {
+  public async startGame(overrides?: StartGameInput): Promise<TableSummary> {
+    if (!this.tableConfig) {
+      throw new Error('Table is not configured.');
+    }
     if (this.players.size < 2) {
       throw new Error('At least two players are required to start a hand.');
     }
-
     if (this.status === 'running') {
-      throw new Error('A hand is already running. Wait for it to finish or stop it.');
+      throw new Error('A hand is already running.');
     }
+
+    const config: TableConfig = {
+      ...this.tableConfig,
+      ...(overrides ?? {}),
+    } as TableConfig;
 
     this.status = 'running';
     this.lastMessage = undefined;
-    this.recordEvent(`Starting ${config.maxHands} hand${config.maxHands > 1 ? 's' : ''} at table ${this.tableId}.`);
+    await this.publishEvent(
+      'hand_started',
+      `Starting session of ${config.maxHands} hand${config.maxHands === 1 ? '' : 's'} at ${this.tableId}.`,
+      { maxHands: config.maxHands },
+    );
 
     const initialHandCount = this.handCount;
     let bustedSeat: RegisteredPlayer | undefined;
@@ -156,7 +174,9 @@ export class CasinoTable {
         this.handCount += 1;
         bustedSeat = this.findBankruptSeat();
         if (bustedSeat) {
-          this.recordEvent(`${bustedSeat.displayName} is out of chips. Ending the session.`);
+          await this.publishEvent('player_busted', `${bustedSeat.displayName} is out of chips.`, {
+            playerId: bustedSeat.id,
+          });
           break;
         }
       }
@@ -166,14 +186,11 @@ export class CasinoTable {
       this.lastMessage = bustedSeat
         ? `Session stopped after ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'} (${bustedSeat.displayName} busted).`
         : `Completed ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'}.`;
-      this.recordEvent(this.lastMessage);
+      await this.publishEvent('hand_completed', this.lastMessage, { handsPlayed });
     } catch (error) {
       this.status = 'error';
-      this.lastMessage =
-        error instanceof Error ? error.message : 'Unknown error occurred while running the game.';
-      if (this.lastMessage) {
-        this.recordEvent(this.lastMessage);
-      }
+      this.lastMessage = error instanceof Error ? error.message : 'Unknown error occurred.';
+      await this.publishEvent('table_error', this.lastMessage ?? 'Table error.');
       throw error;
     } finally {
       if (this.status === 'running') {
@@ -182,19 +199,6 @@ export class CasinoTable {
     }
 
     return this.getSummary();
-  }
-
-  public buildSignupInvitation(config: StartGameInput): SignupInvitation {
-    const invitation = {
-      casinoName: this.casinoName,
-      tableId: this.tableId,
-      minBuyIn: config.minBuyIn,
-      maxBuyIn: config.maxBuyIn,
-      smallBlind: config.smallBlind,
-      bigBlind: config.bigBlind,
-    } satisfies SignupInvitation;
-
-    return signupInvitationSchema.parse(invitation);
   }
 
   private findSeat(preferredSeat?: number): number {
@@ -210,11 +214,10 @@ export class CasinoTable {
     while (Array.from(this.players.values()).some((player) => player.seatNumber === seat)) {
       seat += 1;
     }
-
     return seat;
   }
 
-  private async playHand(config: StartGameInput): Promise<void> {
+  private async playHand(config: TableConfig): Promise<void> {
     const deck = shuffleDeck(createDeck());
     const seats = Array.from(this.players.values()).sort((a, b) => a.seatNumber - b.seatNumber);
 
@@ -243,14 +246,15 @@ export class CasinoTable {
     communityCards.push(...drawCards(deck, 1));
     await this.playBettingRound('river', seats, holeCards, communityCards, config, bettingState);
 
-    this.settlePot(seats, holeCards, communityCards, bettingState);
+    await this.settlePot(seats, holeCards, communityCards, bettingState);
 
     this.lastMessage = `Hand #${this.handCount + 1} completed. Community cards: ${communityCards
       .map(cardToString)
       .join(' ')}`;
-    if (this.lastMessage) {
-      this.recordEvent(this.lastMessage);
-    }
+    await this.publishEvent('hand_completed', this.lastMessage, {
+      communityCards: communityCards.map(cardToString),
+      handNumber: this.handCount + 1,
+    });
   }
 
   private async playBettingRound(
@@ -258,7 +262,7 @@ export class CasinoTable {
     seats: RegisteredPlayer[],
     holeCards: Map<string, Card[]>,
     communityCards: Card[],
-    config: StartGameInput,
+    config: TableConfig,
     state: {
       pot: number;
       contributions: Map<string, number>;
@@ -296,7 +300,10 @@ export class CasinoTable {
       }
 
       if (seat.stack <= 0) {
-        this.recordEvent(`${seat.displayName} is all-in and skips action during ${bettingRound}.`);
+        await this.publishEvent('action_taken', `${seat.displayName} is all-in and skips ${bettingRound}.`, {
+          playerId: seat.id,
+          bettingRound,
+        });
         activeOrder.splice(index % activeOrder.length, 1);
         actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
         if (activeOrder.length <= 1) {
@@ -335,9 +342,8 @@ export class CasinoTable {
       });
 
       const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
-
       const action = actionResponseSchema.parse(result.output ?? {});
-      const resolved = this.applyAction(seat, action, bettingRound, state, legalActions);
+      const resolved = await this.applyAction(seat, action, bettingRound, state, legalActions);
 
       if (resolved === 'fold') {
         activeOrder.splice(index % activeOrder.length, 1);
@@ -357,21 +363,8 @@ export class CasinoTable {
       index += 1;
     }
   }
-  private recordEvent(message: string): void {
-    const entry = `[${new Date().toISOString()}] ${message}`;
-    this.eventLog.push(entry);
-    if (this.eventLog.length > 100) {
-      this.eventLog.shift();
-    }
-  }
-  private requireA2ARuntime(): A2ARuntime {
-    if (!this.runtime.a2a) {
-      throw new Error('A2A runtime not configured for the casino agent.');
-    }
-    return this.runtime.a2a;
-  }
 
-  private applyAction(
+  private async applyAction(
     seat: RegisteredPlayer,
     action: { action: string; amount?: number },
     round: BettingRound,
@@ -383,10 +376,14 @@ export class CasinoTable {
       currentBet: number;
     },
     allowedActions: string[],
-  ): 'fold' | 'call' | 'check' | 'bet' | 'raise' {
-    const setMessage = (message: string) => {
+  ): Promise<'fold' | 'call' | 'check' | 'bet' | 'raise'> {
+    const notify = async (message: string, payload?: Record<string, unknown>) => {
       this.lastMessage = message;
-      this.recordEvent(message);
+      await this.publishEvent('action_taken', message, {
+        playerId: seat.id,
+        bettingRound: round,
+        ...payload,
+      });
     };
 
     const request = action.action;
@@ -408,7 +405,7 @@ export class CasinoTable {
     switch (normalizedAction) {
       case 'fold':
         state.folded.add(seat.id);
-        setMessage(`${seat.displayName} folded during ${round}.`);
+        await notify(`${seat.displayName} folded during ${round}.`);
         return 'fold';
       case 'bet':
       case 'raise':
@@ -423,10 +420,13 @@ export class CasinoTable {
           state.roundBets.set(seat.id, newContribution);
           state.currentBet = Math.max(state.currentBet, newContribution);
           const actionLabel = normalizedAction === 'raise' ? 'raise' : 'bet';
-          setMessage(`${seat.displayName} ${actionLabel} ${amount} during ${round}.`);
+          await notify(`${seat.displayName} ${actionLabel} ${amount} during ${round}.`, {
+            amount,
+            pot: state.pot,
+          });
           return actionLabel;
         } else {
-          setMessage(`${seat.displayName} checked during ${round}.`);
+          await notify(`${seat.displayName} checked during ${round}.`);
           return 'check';
         }
       }
@@ -439,21 +439,24 @@ export class CasinoTable {
           state.pot += callAmount;
           state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + callAmount);
           state.roundBets.set(seat.id, contribution + callAmount);
-          setMessage(`${seat.displayName} called ${callAmount} during ${round}.`);
+          await notify(`${seat.displayName} called ${callAmount} during ${round}.`, {
+            amount: callAmount,
+            pot: state.pot,
+          });
           return 'call';
         } else {
-          setMessage(`${seat.displayName} checked during ${round}.`);
+          await notify(`${seat.displayName} checked during ${round}.`);
           return 'check';
         }
       }
       case 'check':
       default:
-        setMessage(`${seat.displayName} chose to ${normalizedAction} during ${round}.`);
+        await notify(`${seat.displayName} chose to ${normalizedAction} during ${round}.`);
         return 'check';
     }
   }
 
-  private settlePot(
+  private async settlePot(
     seats: RegisteredPlayer[],
     holeCards: Map<string, Card[]>,
     communityCards: Card[],
@@ -464,7 +467,7 @@ export class CasinoTable {
   ): void {
     if (state.pot <= 0) {
       this.lastMessage = 'Hand completed with no chips in the pot.';
-      this.recordEvent(this.lastMessage);
+      await this.publishEvent('hand_completed', this.lastMessage);
       return;
     }
 
@@ -474,7 +477,10 @@ export class CasinoTable {
       const winner = activeSeats[0];
       winner.stack += state.pot;
       this.lastMessage = `${winner.displayName} wins ${state.pot} (everyone else folded).`;
-      this.recordEvent(this.lastMessage);
+      await this.publishEvent('hand_completed', this.lastMessage, {
+        winner: winner.displayName,
+        amount: state.pot,
+      });
       return;
     }
 
@@ -489,7 +495,7 @@ export class CasinoTable {
       .filter((entry) => entry.score);
 
     if (evaluations.length === 0) {
-      this.recordEvent('No active players to settle the pot.');
+      await this.publishEvent('table_error', 'No active players to settle the pot.');
       return;
     }
 
@@ -507,10 +513,45 @@ export class CasinoTable {
       .join(', ');
 
     this.lastMessage = `Pot ${state.pot} awarded to ${winnerNames}. Each receives ${share}.`;
-    this.recordEvent(this.lastMessage);
+    await this.publishEvent('hand_completed', this.lastMessage, {
+      pot: state.pot,
+      winners: winners.map((winner) => winner.seat.displayName),
+      share,
+    });
   }
-  private hasBankruptPlayer(): boolean {
-    return Boolean(this.findBankruptSeat());
+
+  private async publishEvent(
+    eventType: TableEvent['eventType'],
+    message: string,
+    payload?: Record<string, unknown>,
+  ): Promise<void> {
+    const entry: TableEvent = {
+      tableId: this.tableId,
+      eventType,
+      message,
+      timestamp: new Date().toISOString(),
+      payload,
+    };
+    this.eventLog.push(entry);
+    if (this.eventLog.length > 200) {
+      this.eventLog.shift();
+    }
+    if (!this.casinoCallback) {
+      return;
+    }
+
+    try {
+      await this.requireA2ARuntime().client.invoke(this.casinoCallback.card, this.casinoCallback.eventSkill, entry);
+    } catch (error) {
+      console.error(`[poker-table] Failed to publish event ${eventType}:`, error);
+    }
+  }
+
+  private requireA2ARuntime(): A2ARuntime {
+    if (!this.runtime.a2a) {
+      throw new Error('A2A runtime not configured.');
+    }
+    return this.runtime.a2a;
   }
 
   private findBankruptSeat(): RegisteredPlayer | undefined {

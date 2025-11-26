@@ -55,6 +55,7 @@ export type ActionResponse = z.infer<typeof actionResponseSchema>;
 export const signupInvitationSchema = z.object({
   casinoName: z.string(),
   tableId: z.string(),
+  roomId: z.string(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   smallBlind: z.number().positive(),

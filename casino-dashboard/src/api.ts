@@ -1,4 +1,10 @@
-import type { CasinoState, RegisterPayload, StartGamePayload } from './types';
+import type {
+  CreateRoomPayload,
+  LobbyState,
+  RegisterPayload,
+  RoomSnapshot,
+  StartRoomPayload,
+} from './types';
 
 const BASE_URL = import.meta.env.VITE_CASINO_URL ?? 'http://localhost:4000';
 
@@ -7,16 +13,36 @@ const toJson = async (response: Response) => {
     const message = await response.text();
     throw new Error(message || 'Request failed');
   }
-  return response.json();
+  const body = await response.json();
+  if (body && 'ok' in body && body.ok === false) {
+    throw new Error(body.error ?? 'Request failed');
+  }
+  return body;
 };
 
-export const fetchCasinoState = async (): Promise<CasinoState> => {
-  const res = await fetch(`${BASE_URL}/ui/state`);
+export const fetchLobbyState = async (): Promise<LobbyState> => {
+  const res = await fetch(`${BASE_URL}/ui/rooms`);
   return toJson(res);
 };
 
-export const registerPlayer = async (input: RegisterPayload) => {
-  const res = await fetch(`${BASE_URL}/ui/register`, {
+export const fetchRoomSnapshot = async (roomId: string): Promise<RoomSnapshot> => {
+  const res = await fetch(`${BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}`);
+  const data = await toJson(res);
+  return data.room;
+};
+
+export const createRoom = async (input: CreateRoomPayload) => {
+  const res = await fetch(`${BASE_URL}/ui/rooms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await toJson(res);
+  return data.room;
+};
+
+export const registerPlayer = async (roomId: string, input: RegisterPayload) => {
+  const res = await fetch(`${BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -24,8 +50,8 @@ export const registerPlayer = async (input: RegisterPayload) => {
   return toJson(res);
 };
 
-export const startGame = async (input: StartGamePayload) => {
-  const res = await fetch(`${BASE_URL}/ui/start`, {
+export const startRoom = async (roomId: string, input: StartRoomPayload) => {
+  const res = await fetch(`${BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
