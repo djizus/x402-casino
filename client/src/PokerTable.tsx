@@ -413,6 +413,49 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
 
   return (
     <div className="poker-html-ui">
+      <div className="card table-meta-panel">
+        <div className="meta-column">
+          <div className="meta-label">Playback</div>
+          <div className="timeline-controls">
+            <button type="button" onClick={handleTogglePlayback} disabled={!canPlay}>
+              {isPlaying ? 'Pause' : 'Play'}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={timelineMax}
+              value={sliderValue}
+              disabled={!canPlay}
+              onChange={(event) => {
+                setIsPlaying(false);
+                setTimelineIndex(Number(event.currentTarget.value));
+              }}
+            />
+            <span className="timeline-count">
+              {events.length === 0 ? 'Waiting…' : `${sliderValue + 1}/${events.length}`}
+            </span>
+          </div>
+        </div>
+        <div className="meta-column">
+          <div className="meta-label">Latest Event</div>
+          <div className="event-panel inline">
+            {currentEvent ? (
+              <>
+                <div className="event-title">{currentEvent.eventType}</div>
+                <div className="event-message">{currentEvent.message}</div>
+                <div className="event-meta">{new Date(currentEvent.timestamp).toLocaleTimeString()}</div>
+              </>
+            ) : (
+              <div className="event-placeholder">Waiting for action…</div>
+            )}
+            {gameState.lastAction && (
+              <div className="event-last-action">
+                Last action: <span>{gameState.lastAction}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
       <section className="card table-surface">
         <div className="felt-table">
           <div className="felt-center">
@@ -477,70 +520,6 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
           })}
         </div>
       </section>
-
-      <div className="table-footer">
-        <section className="card timeline-panel">
-          <div className="timeline-header">
-            <div>
-              <span className="summary-label">Hand Events</span>
-              <strong>{events.length}</strong>
-            </div>
-            <div className="timeline-count">
-              {events.length === 0 ? 'Waiting for events' : `${sliderValue + 1}/${events.length}`}
-            </div>
-          </div>
-          <div className="timeline-controls">
-            <button type="button" onClick={handleTogglePlayback} disabled={!canPlay}>
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={timelineMax}
-              value={sliderValue}
-              disabled={!canPlay}
-              onChange={(event) => {
-                setIsPlaying(false);
-                setTimelineIndex(Number(event.currentTarget.value));
-              }}
-            />
-          </div>
-        </section>
-
-        <section className="card event-panel">
-          {currentEvent ? (
-            <>
-              <div className="event-title">{currentEvent.eventType}</div>
-              <div className="event-message">{currentEvent.message}</div>
-              <div className="event-meta">{new Date(currentEvent.timestamp).toLocaleTimeString()}</div>
-            </>
-          ) : (
-            <div className="event-placeholder">Waiting for action…</div>
-          )}
-          {gameState.lastAction && (
-            <div className="event-last-action">
-              Last action: <span>{gameState.lastAction}</span>
-            </div>
-          )}
-          {gameState.winningHands.length > 0 && (
-            <div className="winning-list">
-              <div className="event-title">Winning Hands</div>
-              {gameState.winningHands.map((hand, index) => (
-                <div key={`winning-${hand.playerId ?? hand.displayName}-${index}`} className="winning-hand">
-                  <div className="winning-line">
-                    <strong>{hand.displayName}</strong>
-                    {typeof hand.amountWon === 'number' && <span>+{formatAmount(hand.amountWon)}</span>}
-                  </div>
-                  {hand.description && <div className="winning-description">{hand.description}</div>}
-                  <div className="seat-cards compact">
-                    {hand.cards.map((card, idx) => renderCard(card, `winning-${index}-${idx}`, { small: true }))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
     </div>
   );
 }

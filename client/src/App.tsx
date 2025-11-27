@@ -242,45 +242,6 @@ export function App() {
             </div>
           ) : (
             <>
-              {/* Quick Actions Bar */}
-              {roomSnapshot.summary?.status === 'waiting' && (
-                <div
-                  style={{
-                    background: 'rgba(79, 70, 229, 0.2)',
-                    border: '1px solid rgba(99, 102, 241, 0.4)',
-                    borderRadius: '12px',
-                    padding: '1rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    width: '100%',
-                  }}
-                >
-                  <div>
-                    <strong>Room ready to start</strong>
-                    <div style={{ fontSize: '0.85rem', opacity: 0.8, marginTop: '0.25rem' }}>
-                      {roomSnapshot.summary.players.length} player(s) registered
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleStartRoom}
-                    style={{
-                      background: 'linear-gradient(135deg, #10b981, #059669)',
-                      padding: '0.75rem 2rem',
-                      fontSize: '1rem',
-                      fontWeight: '700',
-                      borderRadius: '10px',
-                      border: 'none',
-                      color: 'white',
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
-                    }}
-                  >
-                    🎮 Start Game
-                  </button>
-                </div>
-              )}
-
               <div className="card poker-panel">
                 {roomSnapshot.gameType === 'poker' ? (
                   <PokerTable snapshot={roomSnapshot} events={events} />
