@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RoomSnapshot, RoomEvent, PlayerSeat } from './types';
-import { ThreePokerTableScene, type SeatVisual } from './ThreePokerTableScene';
 
 interface PokerTableProps {
   snapshot: RoomSnapshot;
@@ -30,6 +29,16 @@ interface PokerGameState {
   buttonSeat?: number;
   seats: Map<number, PlayerSeat>;
 }
+
+type DisplaySeat = {
+  seatNumber: number;
+  player: PlayerSeat | null;
+  cards: (string | undefined)[];
+  stack: number;
+  isActive: boolean;
+  isWinner: boolean;
+  isButton: boolean;
+};
 
 const suitSymbol: Record<string, { symbol: string; className: string }> = {
   H: { symbol: "♥", className: "suit-red" },
@@ -341,8 +350,8 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
   const currentEvent = visibleEvents.length > 0 ? visibleEvents[visibleEvents.length - 1] : undefined;
   const configuredMaxPlayers = parseSeatCount(snapshot.config.maxPlayers);
   const maxPlayers = Math.max(2, configuredMaxPlayers ?? 6);
-  const seatPositions = useMemo(() => buildSeatPositions(maxPlayers), [maxPlayers]);
   const currentStage = gameState.stage ?? 'preflop';
+  const showHoleCards = currentStage === 'showdown';
   const winningPlayerIds = useMemo(() => {
     const ids = new Set<string>();
     for (const hand of gameState.winningHands) {
@@ -353,151 +362,184 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
     return ids;
   }, [gameState.winningHands]);
 
-  const seats: (PlayerSeat | null)[] = Array.from({ length: maxPlayers }, (_, index) => {
-    const seatPlayer = gameState.seats.get(index);
-    if (seatPlayer) {
-      return seatPlayer;
+  const displaySeats: DisplaySeat[] = useMemo(() => {
+    return Array.from({ length: maxPlayers }, (_, seatNumber) => {
+      const player = gameState.seats.get(seatNumber) ?? null;
+      const playerCards = player ? gameState.playerCards.get(player.playerId) ?? [] : [];
+      const cards =
+        player && playerCards.length > 0 ? playerCards : player ? [undefined, undefined] : [];
+      return {
+        seatNumber,
+        player,
+        cards,
+        stack: player?.stack ?? 0,
+        isActive: Boolean(player && gameState.currentPlayer === player.displayName),
+        isWinner: Boolean(player && player.playerId && winningPlayerIds.has(player.playerId)),
+        isButton: gameState.buttonSeat === seatNumber,
+      };
+    });
+  }, [gameState, maxPlayers, winningPlayerIds]);
+  const seatPositions = useMemo(() => buildSeatPositions(8), []);
+  const layoutSeatCount = seatPositions.length;
+  const tableSeats: DisplaySeat[] = useMemo(() => {
+    return Array.from({ length: layoutSeatCount }, (_, index) => {
+      const seat = displaySeats[index];
+      if (seat) {
+        return seat;
+      }
+      return {
+        seatNumber: index,
+        player: null,
+        cards: [],
+        stack: 0,
+        isActive: false,
+        isWinner: false,
+        isButton: false,
+      };
+    });
+  }, [displaySeats, layoutSeatCount]);
+  const timelineMax = Math.max(events.length - 1, 0);
+  const sliderValue = Math.min(timelineIndex, timelineMax);
+  const canPlay = events.length > 0;
+  const handleTogglePlayback = () => {
+    if (!canPlay) {
+      return;
     }
-    return null;
-  });
-
-  const seatVisuals: SeatVisual[] = seats.map((player, seatNumber) => {
-    const playerCards = player ? gameState.playerCards.get(player.playerId) ?? [] : [];
-    const cards = player
-      ? playerCards.length > 0
-        ? playerCards
-        : [undefined, undefined]
-      : [];
-    return {
-      seatNumber,
-      player,
-      cards,
-      stack: player?.stack ?? 0,
-      isActive: Boolean(player && gameState.currentPlayer === player.displayName),
-      isWinner: Boolean(player && winningPlayerIds.has(player.playerId)),
-      isButton: gameState.buttonSeat === seatNumber,
-    };
-  });
-
-  const showHoleCards = currentStage === 'showdown';
+    if (timelineIndex >= events.length - 1) {
+      setTimelineIndex(0);
+    }
+    setIsPlaying((prev) => !prev);
+  };
 
   return (
-    <div className="poker-table-container">
-      <div className="poker-table-stage">
-        <div className="poker-table-viewport card">
-          <ThreePokerTableScene
-            seats={seatVisuals}
-            communityCards={gameState.communityCards}
-            pot={gameState.pot}
-            stage={currentStage}
-            showHoleCards={showHoleCards}
-            maxPlayers={maxPlayers}
-          />
-          <div className="table-overlay-info">
-            <div className="overlay-block">
-              <span>Stage</span>
-              <strong>{currentStage.toUpperCase()}</strong>
-            </div>
-            <div className="overlay-block">
-              <span>Pot</span>
-              <strong>{formatAmount(gameState.pot)}</strong>
-            </div>
-            <div className="overlay-block">
-              <span>Current Bet</span>
-              <strong>{formatAmount(gameState.currentBet)}</strong>
-            </div>
-          </div>
-          <div className="seat-overlay-layer">
-            {seatVisuals.map((seat) => {
-              const playerAction = seat.player ? gameState.playerActions.get(seat.player.displayName) : undefined;
-              const showAction =
-                playerAction && Date.now() - new Date(playerAction.timestamp).getTime() < 10000;
-              const seatStyle = seatPositions[seat.seatNumber] ?? {
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-              };
-              return (
-                <div
-                  key={`overlay-${seat.seatNumber}`}
-                  className={`seat-overlay ${seat.player ? 'occupied' : 'empty'} ${
-                    seat.isActive ? 'active' : ''
-                  } ${seat.isWinner ? 'winner' : ''}`}
-                  style={seatStyle}
-                >
-                  <div className="seat-name-row">
-                    <span className="seat-index">#{seat.seatNumber + 1}</span>
-                    <span className="seat-name">{seat.player?.displayName ?? 'Open Seat'}</span>
-                    {seat.isButton && <span className="seat-badge">D</span>}
-                  </div>
-                  <div className="seat-meta-row">
-                    <span>{seat.player ? `${formatAmount(seat.stack)} chips` : 'Available'}</span>
-                    {showAction && playerAction && <span className="seat-action">{playerAction.action}</span>}
-                  </div>
-                  {seat.player && (
-                    <div className="seat-mini-cards">
-                      {Array.from({ length: 2 }).map((_, idx) => {
-                        const cardValue = seat.cards[idx];
-                        return cardValue
-                          ? renderCard(cardValue, `overlay-${seat.seatNumber}-mini-${idx}`, { small: true })
-                          : renderCardBack(`overlay-${seat.seatNumber}-mini-${idx}`, { small: true });
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="action-overlay">
-            {currentEvent ? (
-              <>
-                <div className="event-title">{currentEvent.eventType}</div>
-                <div className="event-message">{currentEvent.message}</div>
-              </>
-            ) : (
-              <div className="event-placeholder">Waiting for action…</div>
-            )}
-            {gameState.lastAction && (
-              <div className="event-last-action">
-                Last action: <span>{gameState.lastAction}</span>
+    <div className="poker-html-ui">
+      <section className="card table-surface">
+        <div className="felt-table">
+          <div className="felt-center">
+            <div className="felt-stats">
+              <div>
+                <span className="summary-label">Pot</span>
+                <strong>{formatAmount(gameState.pot)}</strong>
               </div>
-            )}
-          </div>
-          <div className="table-overlay-bottom">
-            <div className="timeline-overlay">
-              {events.length > 0 ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (timelineIndex >= events.length - 1) {
-                        setTimelineIndex(0);
-                      }
-                      setIsPlaying((prev) => !prev);
-                    }}
-                  >
-                    {isPlaying ? 'Pause' : 'Play'}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={Math.max(events.length - 1, 0)}
-                    value={timelineIndex}
-                    onChange={(event) => {
-                      setIsPlaying(false);
-                      setTimelineIndex(Number(event.target.value));
-                    }}
-                  />
-                  <span className="info-value">
-                    {events.length === 0 ? '0/0' : `${timelineIndex + 1}/${events.length}`}
-                  </span>
-                </>
-              ) : (
-                <span className="info-value muted">Waiting for events…</span>
-              )}
+              <div>
+                <span className="summary-label">Stage</span>
+                <strong>{currentStage.toUpperCase()}</strong>
+              </div>
+              <div>
+                <span className="summary-label">Current Bet</span>
+                <strong>{formatAmount(gameState.currentBet)}</strong>
+              </div>
+            </div>
+            <div className="felt-community">
+              {Array.from({ length: 5 }).map((_, idx) => {
+                const cardValue = gameState.communityCards[idx];
+                return cardValue
+                  ? renderCard(cardValue, `felt-community-${idx}`, { small: true, delay: idx * 0.05 })
+                  : renderCardBack(`felt-community-back-${idx}`, { small: true, delay: idx * 0.05 });
+              })}
             </div>
           </div>
+          {tableSeats.map((seat, index) => {
+            const position = seatPositions[index];
+            const playerAction = seat.player ? gameState.playerActions.get(seat.player.displayName) : undefined;
+            const recentAction =
+              playerAction && Date.now() - new Date(playerAction.timestamp).getTime() < 10000 ? playerAction : null;
+            return (
+              <div
+                key={`table-seat-${seat.seatNumber}-${index}`}
+                className={`table-seat ${seat.player ? 'occupied' : 'empty'} ${seat.isActive ? 'active' : ''} ${
+                  seat.isWinner ? 'winner' : ''
+                }`}
+                style={position}
+              >
+                <div className="table-seat-head">
+                  <span className="seat-number">Seat {seat.seatNumber + 1}</span>
+                  {seat.isButton && <span className="seat-badge">Dealer</span>}
+                </div>
+                <div className="table-seat-name">{seat.player?.displayName ?? 'Open seat'}</div>
+                <div className="table-seat-stack">
+                  {seat.player ? `${formatAmount(seat.stack)} chips` : 'Waiting'}
+                </div>
+                {seat.player && (
+                  <div className="table-seat-cards">
+                    {Array.from({ length: 2 }).map((_, idx) => {
+                      const cardValue = seat.cards[idx];
+                      if (cardValue && showHoleCards) {
+                        return renderCard(cardValue, `table-seat-card-${seat.seatNumber}-${idx}`, { small: true });
+                      }
+                      return renderCardBack(`table-seat-back-${seat.seatNumber}-${idx}`, { small: true });
+                    })}
+                  </div>
+                )}
+                {recentAction && <div className="table-seat-action">{recentAction.action}</div>}
+              </div>
+            );
+          })}
         </div>
+      </section>
+
+      <div className="table-footer">
+        <section className="card timeline-panel">
+          <div className="timeline-header">
+            <div>
+              <span className="summary-label">Hand Events</span>
+              <strong>{events.length}</strong>
+            </div>
+            <div className="timeline-count">
+              {events.length === 0 ? 'Waiting for events' : `${sliderValue + 1}/${events.length}`}
+            </div>
+          </div>
+          <div className="timeline-controls">
+            <button type="button" onClick={handleTogglePlayback} disabled={!canPlay}>
+              {isPlaying ? 'Pause' : 'Play'}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={timelineMax}
+              value={sliderValue}
+              disabled={!canPlay}
+              onChange={(event) => {
+                setIsPlaying(false);
+                setTimelineIndex(Number(event.currentTarget.value));
+              }}
+            />
+          </div>
+        </section>
+
+        <section className="card event-panel">
+          {currentEvent ? (
+            <>
+              <div className="event-title">{currentEvent.eventType}</div>
+              <div className="event-message">{currentEvent.message}</div>
+              <div className="event-meta">{new Date(currentEvent.timestamp).toLocaleTimeString()}</div>
+            </>
+          ) : (
+            <div className="event-placeholder">Waiting for action…</div>
+          )}
+          {gameState.lastAction && (
+            <div className="event-last-action">
+              Last action: <span>{gameState.lastAction}</span>
+            </div>
+          )}
+          {gameState.winningHands.length > 0 && (
+            <div className="winning-list">
+              <div className="event-title">Winning Hands</div>
+              {gameState.winningHands.map((hand, index) => (
+                <div key={`winning-${hand.playerId ?? hand.displayName}-${index}`} className="winning-hand">
+                  <div className="winning-line">
+                    <strong>{hand.displayName}</strong>
+                    {typeof hand.amountWon === 'number' && <span>+{formatAmount(hand.amountWon)}</span>}
+                  </div>
+                  {hand.description && <div className="winning-description">{hand.description}</div>}
+                  <div className="seat-cards compact">
+                    {hand.cards.map((card, idx) => renderCard(card, `winning-${index}-${idx}`, { small: true }))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
