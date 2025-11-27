@@ -210,11 +210,20 @@ export function App() {
               key={room.roomId}
               className={`room-tab ${room.roomId === selectedRoomId ? 'active' : ''}`}
               onClick={() => setSelectedRoomId(room.roomId)}
+              title={`${room.roomId} - ${room.status} - ${room.handCount} hands`}
             >
-              {room.roomId}
-              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', opacity: 0.7 }}>
-                ({room.playerCount}/{room.gameType === 'poker' ? '6' : '4'})
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span>{room.roomId}</span>
+                  <span className={`status-badge ${room.status}`} style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem' }}>
+                    {room.status}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.75rem', opacity: 0.7, display: 'flex', gap: '0.75rem' }}>
+                  <span>👥 {room.playerCount}/{room.gameType === 'poker' ? '6' : '4'}</span>
+                  <span>🃏 {room.handCount} hands</span>
+                </div>
+              </div>
             </button>
           ))}
           <button className="create-room-btn" onClick={() => setShowCreateModal(true)}>
@@ -315,6 +324,40 @@ export function App() {
                     <div>
                       <strong>Hands:</strong> {roomSnapshot.summary?.handCount ?? 0}
                     </div>
+                    {roomSnapshot.gameType === 'poker' && roomSnapshot.config && (
+                      <>
+                        <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                          <strong>Configuration</strong>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                          {roomSnapshot.config.smallBlind !== undefined && (
+                            <div>
+                              <strong>SB:</strong> {formatAmount(Number(roomSnapshot.config.smallBlind))}
+                            </div>
+                          )}
+                          {roomSnapshot.config.bigBlind !== undefined && (
+                            <div>
+                              <strong>BB:</strong> {formatAmount(Number(roomSnapshot.config.bigBlind))}
+                            </div>
+                          )}
+                          {roomSnapshot.config.startingStack !== undefined && (
+                            <div>
+                              <strong>Stack:</strong> {formatAmount(Number(roomSnapshot.config.startingStack))}
+                            </div>
+                          )}
+                          {roomSnapshot.config.minBuyIn !== undefined && (
+                            <div>
+                              <strong>Min:</strong> {formatAmount(Number(roomSnapshot.config.minBuyIn))}
+                            </div>
+                          )}
+                          {roomSnapshot.config.maxBuyIn !== undefined && (
+                            <div>
+                              <strong>Max:</strong> {formatAmount(Number(roomSnapshot.config.maxBuyIn))}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div className="action-buttons">
                     <button onClick={handleStartRoom}>Start Room</button>
