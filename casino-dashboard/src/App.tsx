@@ -235,18 +235,18 @@ export function App() {
             <>
               {/* Quick Actions Bar */}
               {roomSnapshot.summary?.status === 'waiting' && (
-                <div style={{
-                  background: 'rgba(79, 70, 229, 0.2)',
-                  border: '1px solid rgba(99, 102, 241, 0.4)',
-                  borderRadius: '12px',
-                  padding: '1rem',
-                  marginBottom: '1rem',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  maxWidth: '1400px',
-                  width: '100%',
-                }}>
+                <div
+                  style={{
+                    background: 'rgba(79, 70, 229, 0.2)',
+                    border: '1px solid rgba(99, 102, 241, 0.4)',
+                    borderRadius: '12px',
+                    padding: '1rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    width: '100%',
+                  }}
+                >
                   <div>
                     <strong>Room ready to start</strong>
                     <div style={{ fontSize: '0.85rem', opacity: 0.8, marginTop: '0.25rem' }}>
@@ -272,16 +272,18 @@ export function App() {
                 </div>
               )}
 
-              {roomSnapshot.gameType === 'poker' ? (
-                <PokerTable snapshot={roomSnapshot} events={events} />
-              ) : (
-                <div style={{ textAlign: 'center' }}>
-                  <h2>{roomSnapshot.gameType}</h2>
-                  <p>Game type: {roomSnapshot.gameType}</p>
-                  <p>Players: {roomSnapshot.summary?.players.length ?? 0}</p>
-                  <p>Status: {roomSnapshot.summary?.status ?? 'waiting'}</p>
-                </div>
-              )}
+              <div className="card poker-panel">
+                {roomSnapshot.gameType === 'poker' ? (
+                  <PokerTable snapshot={roomSnapshot} events={events} />
+                ) : (
+                  <div style={{ textAlign: 'center' }}>
+                    <h2>{roomSnapshot.gameType}</h2>
+                    <p>Game type: {roomSnapshot.gameType}</p>
+                    <p>Players: {roomSnapshot.summary?.players.length ?? 0}</p>
+                    <p>Status: {roomSnapshot.summary?.status ?? 'waiting'}</p>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>

@@ -17,8 +17,11 @@ import {
   roomSummarySchema,
   RoomEvent,
 } from './protocol';
-import { cardToString, createDeck, drawCards, shuffleDeck } from './cards';
-import { compareHandScores, describeHand, evaluateBestHand } from './hand-evaluator';
+import { cardToString } from './cards';
+import { describeHand } from './hand-evaluator';
+import { Table } from './engine/table';
+import { DealerAction, type DealerActionRange, type PotResolution } from './engine/dealer';
+import { RoundOfBetting } from './engine/community-cards';
 
 type RoomStatus = 'waiting' | 'running' | 'idle' | 'error';
 const CHIP_EPSILON = 1e-6;
@@ -33,6 +36,13 @@ interface RegisteredPlayer {
   stack: number;
   card: AgentCard;
 }
+type BettingState = {
+  pot: number;
+  contributions: Map<string, number>;
+  folded: Set<string>;
+  roundBets: Map<string, number>;
+  currentBet: number;
+};
 
 export type RoomRuntime = AgentRuntime & {
   a2a?: A2ARuntime;
@@ -49,6 +59,9 @@ export class PokerRoom {
   private handCount = 0;
   private lastMessage?: string;
   private readonly eventLog: RoomEvent[] = [];
+  private buttonSeat = -1;
+  private table?: Table;
+  private readonly seatAssignments = new Map<number, string>();
 
   constructor(runtime: RoomRuntime, roomId: string) {
     this.runtime = runtime;
@@ -64,9 +77,20 @@ export class PokerRoom {
     this.casinoCallback = { card: casinoCard, eventSkill: input.casinoCallback.eventSkill };
     this.status = 'waiting';
     this.players.clear();
+    this.seatAssignments.clear();
     this.handCount = 0;
     this.lastMessage = undefined;
     this.eventLog.length = 0;
+    this.buttonSeat = -1;
+    this.table = new Table(
+      {
+        blinds: {
+          small: input.config.smallBlind,
+          big: input.config.bigBlind,
+        },
+      },
+      input.config.maxPlayers,
+    );
 
     await this.publishEvent('room_status', `Room ${this.roomId} configured.`, {
       casinoName: this.casinoName,
@@ -102,6 +126,7 @@ export class PokerRoom {
     if (!this.roomConfig) {
       throw new Error('Room is not configured.');
     }
+    const table = this.ensureTable();
 
     if (this.players.size >= this.roomConfig.maxPlayers) {
       throw new Error(`Room ${this.roomId} is full (${this.roomConfig.maxPlayers} players max).`);
@@ -128,6 +153,8 @@ export class PokerRoom {
       card,
     };
 
+    table.sitDown(seatNumber, input.startingStack);
+    this.seatAssignments.set(seatNumber, player.id);
     this.players.set(player.id, player);
 
     const result: RegisterPlayerResult = {
@@ -162,6 +189,11 @@ export class PokerRoom {
       ...(overrides ?? {}),
     } as RoomConfig;
 
+    const table = this.ensureTable();
+    table.setForcedBets({
+      blinds: { small: config.smallBlind, big: config.bigBlind },
+    });
+
     this.status = 'running';
     this.lastMessage = undefined;
     await this.publishEvent('hand_started', `Starting session of ${config.maxHands} hand${config.maxHands === 1 ? '' : 's'} at ${this.roomId}.`, {
@@ -180,6 +212,9 @@ export class PokerRoom {
           await this.publishEvent('player_busted', `${bustedSeat.displayName} is out of chips.`, {
             playerId: bustedSeat.id,
           });
+          this.table?.standUp(bustedSeat.seatNumber);
+          this.seatAssignments.delete(bustedSeat.seatNumber);
+          this.players.delete(bustedSeat.id);
           break;
         }
       }
@@ -221,16 +256,8 @@ export class PokerRoom {
   }
 
   private async playHand(config: RoomConfig): Promise<void> {
-    const deck = shuffleDeck(createDeck());
-    const seats = Array.from(this.players.values()).sort((a, b) => a.seatNumber - b.seatNumber);
-
-    const holeCards = new Map<string, Card[]>();
-    for (const seat of seats) {
-      holeCards.set(seat.id, drawCards(deck, 2));
-    }
-
-    const communityCards: Card[] = [];
-    const bettingState = {
+    const table = this.ensureTable();
+    const bettingState: BettingState = {
       pot: 0,
       contributions: new Map<string, number>(),
       folded: new Set<string>(),
@@ -238,22 +265,23 @@ export class PokerRoom {
       currentBet: 0,
     };
 
-    await this.publishHandStage('preflop', communityCards);
-    await this.playBettingRound('preflop', seats, holeCards, communityCards, config, bettingState);
+    table.startHand();
+    this.buttonSeat = table.button();
+    this.syncStacksFromHand(table);
+    await this.publishHandStage('preflop', table.communityCardsSnapshot());
+    await this.playBettingRound('preflop', table, config, bettingState, true);
 
-    communityCards.push(...drawCards(deck, 3));
-    await this.publishHandStage('flop', communityCards);
-    await this.playBettingRound('flop', seats, holeCards, communityCards, config, bettingState);
+    while (!table.bettingRoundsCompleted()) {
+      const stage = this.toHandStage(table.roundOfBetting());
+      await this.publishHandStage(stage, table.communityCardsSnapshot());
+      await this.playBettingRound(stage, table, config, bettingState, false);
+    }
 
-    communityCards.push(...drawCards(deck, 1));
-    await this.publishHandStage('turn', communityCards);
-    await this.playBettingRound('turn', seats, holeCards, communityCards, config, bettingState);
-
-    communityCards.push(...drawCards(deck, 1));
-    await this.publishHandStage('river', communityCards);
-    await this.playBettingRound('river', seats, holeCards, communityCards, config, bettingState);
-
-    await this.settlePot(seats, holeCards, communityCards, bettingState);
+    const communityCards = table.communityCardsSnapshot();
+    const showdownCards = table.holeCardsSnapshot();
+    const resolutions = table.showdown();
+    this.syncStacksFromTable();
+    await this.publishShowdown(communityCards, showdownCards, resolutions);
     await this.publishHandStage('showdown', communityCards);
 
     this.lastMessage = `Hand #${this.handCount + 1} completed. Community cards: ${communityCards
@@ -262,142 +290,111 @@ export class PokerRoom {
   }
 
   private async playBettingRound(
-    bettingRound: BettingRound,
-    seats: RegisteredPlayer[],
-    holeCards: Map<string, Card[]>,
-    communityCards: Card[],
+    stage: BettingRound,
+    table: Table,
     config: RoomConfig,
-    state: {
-      pot: number;
-      contributions: Map<string, number>;
-      folded: Set<string>;
-      roundBets: Map<string, number>;
-      currentBet: number;
-    },
+    state: BettingState,
+    includeExistingBets: boolean,
   ): Promise<void> {
-    state.roundBets.clear();
-    state.currentBet = 0;
+    this.prepareRoundState(state, table, includeExistingBets);
 
-    const activeOrder = seats.filter(
-      (seat) => !state.folded.has(seat.id) && (holeCards.get(seat.id)?.length ?? 0) > 0,
-    );
-    if (activeOrder.length === 0) {
-      return;
-    }
-
-    let actionsSinceRaise = 0;
-    let index = 0;
-
-    while (activeOrder.length > 0 && actionsSinceRaise < activeOrder.length) {
-      const seat = activeOrder[index % activeOrder.length];
-
-      if (state.folded.has(seat.id)) {
-        activeOrder.splice(index % activeOrder.length, 1);
-        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
+    while (table.bettingRoundInProgress()) {
+      const seatIndex = table.playerToAct();
+      const seat = this.getSeatPlayer(seatIndex);
+      if (!seat) {
+        table.applyAction(DealerAction.FOLD);
         continue;
       }
 
-      if ((holeCards.get(seat.id)?.length ?? 0) === 0) {
-        activeOrder.splice(index % activeOrder.length, 1);
-        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
-        continue;
-      }
-
-      if (seat.stack <= 0) {
-        await this.publishEvent('action_taken', `${seat.displayName} is all-in and skips ${bettingRound}.`, {
-          playerId: seat.id,
-          bettingRound,
-        });
-        activeOrder.splice(index % activeOrder.length, 1);
-        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
-        if (activeOrder.length <= 1) {
-          break;
-        }
-        continue;
-      }
-
-      const cards = holeCards.get(seat.id);
-      if (!cards) {
+      const holeCards = table.holeCardsSnapshot()[seatIndex];
+      if (!holeCards || holeCards.length === 0) {
+        table.applyAction(DealerAction.FOLD);
         continue;
       }
 
       const roundContribution = state.roundBets.get(seat.id) ?? 0;
       const amountToCall = Math.max(0, state.currentBet - roundContribution);
-
-      const legalActions =
-        amountToCall > 0
-          ? seat.stack > amountToCall
-            ? ['call', 'raise', 'fold']
-            : ['call', 'fold']
-          : seat.stack > 0
-          ? ['check', 'bet', 'fold']
-          : ['check', 'fold'];
+      const seatState = this.getHandSeatState(table, seatIndex);
+      const seatStack = seatState?.stack ?? seat.stack;
+      const range = table.legalActions();
+      const legalActions = this.actionMaskToLabels(range);
 
       const actionRequest = actionRequestSchema.parse({
         roomId: this.roomId,
-        bettingRound,
-        communityCards,
-        holeCards: cards,
+        bettingRound: stage,
+        communityCards: table.communityCardsSnapshot(),
+        holeCards,
         pot: state.pot,
         minimumRaise: config.smallBlind,
         currentBet: amountToCall,
-        playerStack: seat.stack,
+        playerStack: seatStack,
         legalActions,
       });
 
       const result = await this.requireA2ARuntime().client.invoke(seat.card, seat.actionSkill, actionRequest);
       const action = actionResponseSchema.parse(result.output ?? {});
-      const resolved = await this.applyAction(seat, action, bettingRound, state, legalActions, communityCards);
-
-      if (resolved === 'fold') {
-        activeOrder.splice(index % activeOrder.length, 1);
-        actionsSinceRaise = Math.min(actionsSinceRaise, activeOrder.length);
-        if (activeOrder.length <= 1) {
-          break;
-        }
-        continue;
-      }
+      const resolved = await this.applyAction({
+        seat,
+        action,
+        stage,
+        state,
+        allowedActions: legalActions,
+        table,
+        seatIndex,
+        amountToCall,
+        communityCards: table.communityCardsSnapshot(),
+        range,
+      });
 
       if (resolved === 'bet' || resolved === 'raise') {
-        actionsSinceRaise = 1;
-      } else {
-        actionsSinceRaise += 1;
+        // reset action count equivalent by restarting loop
       }
-
-      index += 1;
     }
+
+    table.endBettingRound();
   }
 
-  private async applyAction(
-    seat: RegisteredPlayer,
-    action: { action: string; amount?: number },
-    round: BettingRound,
-    state: {
-      pot: number;
-      contributions: Map<string, number>;
-      folded: Set<string>;
-      roundBets: Map<string, number>;
-      currentBet: number;
-    },
-    allowedActions: string[],
-    communityCards: Card[],
-  ): Promise<'fold' | 'call' | 'check' | 'bet' | 'raise'> {
+  private async applyAction(params: {
+    seat: RegisteredPlayer;
+    action: { action: string; amount?: number; message?: string };
+    stage: BettingRound;
+    state: BettingState;
+    allowedActions: string[];
+    table: Table;
+    seatIndex: number;
+    amountToCall: number;
+    communityCards: Card[];
+    range: DealerActionRange;
+  }): Promise<'fold' | 'call' | 'check' | 'bet' | 'raise'> {
+    const { seat, action, stage, state, allowedActions, table, seatIndex, amountToCall, communityCards, range } = params;
+
+    const seatState = this.getHandSeatState(table, seatIndex);
+    const available = seatState?.stack ?? seat.stack;
+
     const notify = async (message: string, payload?: Record<string, unknown>) => {
       this.lastMessage = message;
       await this.publishEvent('action_taken', message, {
         playerId: seat.id,
-        bettingRound: round,
+        playerName: seat.displayName,
+        seatNumber: seat.seatNumber,
+        stage,
         communityCards: communityCards.map(cardToString),
+        currentBet: state.currentBet,
+        legalActions: allowedActions,
+        ...(action.message ? { agentMessage: action.message } : {}),
         ...payload,
       });
     };
 
-    const request = action.action;
     const allow = (name: string) => allowedActions.includes(name);
+    let requestedAction = action.action;
+    if (requestedAction === 'all-in') {
+      requestedAction = amountToCall > 0 ? 'raise' : 'bet';
+    }
 
-    let normalizedAction = request;
-    if (!allow(request)) {
-      if ((request === 'check' || request === 'bet' || request === 'raise') && allow('call')) {
+    let normalizedAction = requestedAction;
+    if (!allow(requestedAction)) {
+      if ((requestedAction === 'check' || requestedAction === 'bet' || requestedAction === 'raise') && allow('call')) {
         normalizedAction = 'call';
       } else if (allow('check')) {
         normalizedAction = 'check';
@@ -408,157 +405,249 @@ export class PokerRoom {
       }
     }
 
+    const contribution = state.roundBets.get(seat.id) ?? 0;
+
+    const updateStacks = (delta: number) => {
+      if (delta <= 0) {
+        return;
+      }
+      state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + delta);
+      state.roundBets.set(seat.id, contribution + delta);
+      state.pot += delta;
+      state.currentBet = Math.max(state.currentBet, contribution + delta);
+    };
+
     switch (normalizedAction) {
       case 'fold':
         state.folded.add(seat.id);
-        await notify(`${seat.displayName} folded during ${round}.`);
+        table.applyAction(DealerAction.FOLD);
+        await notify(`${seat.displayName} folded during ${stage}.`, {
+          pot: state.pot,
+          playerStack: seat.stack,
+        });
         return 'fold';
       case 'bet':
-      case 'raise':
-      case 'all-in': {
-        const requested = typeof action.amount === 'number' && Number.isFinite(action.amount) ? action.amount : 0;
-        const amount = Math.max(0, Math.min(requested, seat.stack));
-        if (amount > 0) {
-          seat.stack -= amount;
-          state.pot += amount;
-          state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + amount);
-          const newContribution = (state.roundBets.get(seat.id) ?? 0) + amount;
-          state.roundBets.set(seat.id, newContribution);
-          state.currentBet = Math.max(state.currentBet, newContribution);
-          const actionLabel = normalizedAction === 'raise' ? 'raise' : 'bet';
-          await notify(`${seat.displayName} ${actionLabel} ${amount} during ${round}.`, {
-            amount,
-            pot: state.pot,
-          });
-          return actionLabel;
+      case 'raise': {
+        const requestedDelta = typeof action.amount === 'number' && Number.isFinite(action.amount) ? action.amount : available;
+        const boundedDelta = Math.max(0, Math.min(requestedDelta, available));
+        let targetTotal = contribution + boundedDelta;
+        if (range.chipRange) {
+          targetTotal = Math.max(range.chipRange.min, targetTotal);
+          targetTotal = Math.min(range.chipRange.max, targetTotal);
         } else {
-          await notify(`${seat.displayName} checked during ${round}.`);
+          targetTotal = Math.min(contribution + available, targetTotal);
+        }
+        const delta = Math.max(0, targetTotal - contribution);
+        if (delta <= 0) {
+          table.applyAction(DealerAction.CHECK);
+          await notify(`${seat.displayName} checked during ${stage}.`, {
+            pot: state.pot,
+            playerStack: seat.stack,
+          });
           return 'check';
         }
+        table.applyAction(normalizedAction === 'raise' ? DealerAction.RAISE : DealerAction.BET, targetTotal);
+        updateStacks(delta);
+        this.syncStacksFromHand(table);
+        await notify(`${seat.displayName} ${normalizedAction} ${delta} during ${stage}.`, {
+          amount: delta,
+          pot: state.pot,
+          playerStack: seat.stack,
+        });
+        return normalizedAction;
       }
       case 'call': {
-        const contribution = state.roundBets.get(seat.id) ?? 0;
-        const amountToCall = Math.max(0, state.currentBet - contribution);
-        const callAmount = Math.min(amountToCall, seat.stack);
-        if (callAmount > 0) {
-          seat.stack -= callAmount;
-          state.pot += callAmount;
-          state.contributions.set(seat.id, (state.contributions.get(seat.id) ?? 0) + callAmount);
-          state.roundBets.set(seat.id, contribution + callAmount);
-          await notify(`${seat.displayName} called ${callAmount} during ${round}.`, {
-            amount: callAmount,
+        if (amountToCall <= 0 && allow('check')) {
+          table.applyAction(DealerAction.CHECK);
+          await notify(`${seat.displayName} checked during ${stage}.`, {
             pot: state.pot,
+            playerStack: seat.stack,
           });
-          return 'call';
-        } else {
-          await notify(`${seat.displayName} checked during ${round}.`);
           return 'check';
         }
+        const callAmount = Math.min(amountToCall, available);
+        table.applyAction(DealerAction.CALL);
+        updateStacks(callAmount);
+        if (callAmount > 0) {
+          this.syncStacksFromHand(table);
+          await notify(`${seat.displayName} called ${callAmount} during ${stage}.`, {
+            amount: callAmount,
+            pot: state.pot,
+            playerStack: seat.stack,
+          });
+          return 'call';
+        }
+        await notify(`${seat.displayName} checked during ${stage}.`, {
+          pot: state.pot,
+          playerStack: seat.stack,
+        });
+        return 'check';
       }
       case 'check':
       default:
-        await notify(`${seat.displayName} chose to ${normalizedAction} during ${round}.`);
+        table.applyAction(DealerAction.CHECK);
+        await notify(`${seat.displayName} checked during ${stage}.`, {
+          pot: state.pot,
+          playerStack: seat.stack,
+        });
         return 'check';
     }
   }
 
-  private async settlePot(
-    seats: RegisteredPlayer[],
-    holeCards: Map<string, Card[]>,
+  private prepareRoundState(state: BettingState, table: Table, includeExistingBets: boolean): void {
+    state.roundBets.clear();
+    state.currentBet = 0;
+    if (includeExistingBets) {
+      const seatStates = table.handSeatStates();
+      seatStates.forEach((seatState, seatIndex) => {
+        if (!seatState || seatState.betSize <= 0) {
+          return;
+        }
+        const player = this.getSeatPlayer(seatIndex);
+        if (!player) {
+          return;
+        }
+        state.roundBets.set(player.id, seatState.betSize);
+        state.contributions.set(player.id, (state.contributions.get(player.id) ?? 0) + seatState.betSize);
+        state.currentBet = Math.max(state.currentBet, seatState.betSize);
+      });
+    }
+    state.pot = this.computePot(state);
+  }
+
+  private actionMaskToLabels(range: DealerActionRange): string[] {
+    const labels: string[] = [];
+    if (range.actionMask & DealerAction.FOLD) {
+      labels.push('fold');
+    }
+    if (range.actionMask & DealerAction.CHECK) {
+      labels.push('check');
+    }
+    if (range.actionMask & DealerAction.CALL) {
+      labels.push('call');
+    }
+    if (range.actionMask & DealerAction.BET) {
+      labels.push('bet');
+    }
+    if (range.actionMask & DealerAction.RAISE) {
+      labels.push('raise');
+    }
+    return labels;
+  }
+
+  private computePot(state: BettingState): number {
+    let total = 0;
+    state.contributions.forEach((value) => {
+      total += value;
+    });
+    return total;
+  }
+
+  private toHandStage(round: RoundOfBetting): BettingRound {
+    switch (round) {
+      case RoundOfBetting.FLOP:
+        return 'flop';
+      case RoundOfBetting.TURN:
+        return 'turn';
+      case RoundOfBetting.RIVER:
+        return 'river';
+      case RoundOfBetting.PREFLOP:
+      default:
+        return 'preflop';
+    }
+  }
+
+  private async publishShowdown(
     communityCards: Card[],
-    state: {
-      pot: number;
-      folded: Set<string>;
-    },
+    showdownCards: (Card[] | null)[],
+    resolutions: PotResolution[],
   ): Promise<void> {
     const handNumber = this.handCount + 1;
-    const showdownHands = seats.map((seat) => ({
-      playerId: seat.id,
-      displayName: seat.displayName,
-      cards: (holeCards.get(seat.id) ?? []).map(cardToString),
-    }));
+    const totalPot = resolutions.reduce((sum, resolution) => sum + resolution.pot.size(), 0);
+    const showdownHands = Array.from(this.players.values())
+      .sort((a, b) => a.seatNumber - b.seatNumber)
+      .map((player) => ({
+        playerId: player.id,
+        displayName: player.displayName,
+        cards: (showdownCards[player.seatNumber] ?? []).map(cardToString),
+      }));
 
-    if (state.pot <= 0) {
-      this.lastMessage = 'Hand completed with no chips in the pot.';
-      await this.publishEvent('hand_completed', this.lastMessage, {
-        communityCards: communityCards.map(cardToString),
-        pot: state.pot,
-        winningHands: [],
-        showdownHands,
-        handNumber,
-      });
-      return;
-    }
-
-    const activeSeats = seats.filter((seat) => !state.folded.has(seat.id));
-
-    if (activeSeats.length === 1) {
-      const winner = activeSeats[0];
-      winner.stack += state.pot;
-      this.lastMessage = `${winner.displayName} wins ${state.pot} (everyone else folded).`;
-      await this.publishEvent('hand_completed', this.lastMessage, {
-        winner: winner.displayName,
-        amount: state.pot,
-        communityCards: communityCards.map(cardToString),
-        winningHands: [
-          {
-            playerId: winner.id,
-            displayName: winner.displayName,
-            cards: (holeCards.get(winner.id) ?? []).map(cardToString),
-            amountWon: state.pot,
-            description: 'Last player standing',
-          },
-        ],
-        showdownHands,
-        handNumber,
-      });
-      return;
-    }
-
-    const evaluations = activeSeats
-      .map((seat) => {
-        const cards = [...(holeCards.get(seat.id) ?? []), ...communityCards];
+    const winningHands = resolutions.flatMap((resolution) =>
+      resolution.winners.map((winner) => {
+        const player = this.getSeatPlayer(winner.seatIndex);
         return {
-          seat,
-          score: evaluateBestHand(cards),
+          playerId: player?.id,
+          displayName: player?.displayName ?? `Seat ${winner.seatIndex}`,
+          cards: winner.holeCards.map(cardToString),
+          amountWon: winner.share,
+          description: describeHand(winner.score),
         };
-      })
-      .filter((entry) => entry.score);
+      }),
+    );
 
-    if (evaluations.length === 0) {
-      await this.publishEvent('room_error', 'No active players to settle the pot.');
-      return;
-    }
+    const winnerDescription =
+      winningHands.length > 0
+        ? winningHands.map((hand) => `${hand.displayName} (${hand.description})`).join(', ')
+        : 'No contest';
+    this.lastMessage = `Pot ${totalPot} awarded to ${winnerDescription}.`;
 
-    evaluations.sort((a, b) => compareHandScores(b.score, a.score));
-    const bestScore = evaluations[0].score;
-    const winners = evaluations.filter((entry) => compareHandScores(entry.score, bestScore) === 0);
-
-    const share = state.pot / winners.length;
-    winners.forEach((winner) => {
-      winner.seat.stack += share;
-    });
-
-    const winnerNames = winners
-      .map((winner) => `${winner.seat.displayName} (${describeHand(winner.score)})`)
-      .join(', ');
-
-    this.lastMessage = `Pot ${state.pot} awarded to ${winnerNames}. Each receives ${share}.`;
     await this.publishEvent('hand_completed', this.lastMessage, {
-      pot: state.pot,
-      winners: winners.map((winner) => winner.seat.displayName),
-      share,
+      pot: totalPot,
       communityCards: communityCards.map(cardToString),
-      winningHands: winners.map((winner) => ({
-        playerId: winner.seat.id,
-        displayName: winner.seat.displayName,
-        cards: (holeCards.get(winner.seat.id) ?? []).map(cardToString),
-        amountWon: share,
-        description: describeHand(winner.score),
-      })),
+      winningHands,
       showdownHands,
       handNumber,
     });
+  }
+
+  private getSeatPlayer(seatIndex: number): RegisteredPlayer | undefined {
+    const playerId = this.seatAssignments.get(seatIndex);
+    if (!playerId) {
+      return undefined;
+    }
+    return this.players.get(playerId);
+  }
+
+  private getHandSeatState(table: Table, seatIndex: number) {
+    const states = table.handSeatStates();
+    return states[seatIndex] ?? null;
+  }
+
+  private syncStacksFromHand(table: Table): void {
+    const states = table.handSeatStates();
+    states.forEach((seatState, seatIndex) => {
+      if (!seatState) {
+        return;
+      }
+      const player = this.getSeatPlayer(seatIndex);
+      if (player) {
+        player.stack = seatState.stack;
+      }
+    });
+  }
+
+  private syncStacksFromTable(): void {
+    const table = this.table;
+    if (!table) {
+      return;
+    }
+    const states = table.seatStates();
+    states.forEach((seatState, seatIndex) => {
+      if (!seatState) {
+        return;
+      }
+      const player = this.getSeatPlayer(seatIndex);
+      if (player) {
+        player.stack = seatState.stack;
+      }
+    });
+  }
+
+  private ensureTable(): Table {
+    if (!this.table) {
+      throw new Error('Room is not configured.');
+    }
+    return this.table;
   }
 
   private async publishHandStage(stage: HandStage, cards: Card[]): Promise<void> {
@@ -576,6 +665,7 @@ export class PokerRoom {
       {
         stage,
         communityCards: cards.map(cardToString),
+        buttonSeat: this.buttonSeat,
       },
     );
   }

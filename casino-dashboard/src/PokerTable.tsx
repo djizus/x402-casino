@@ -26,15 +26,9 @@ interface PokerGameState {
   stage?: HandStage;
   winningHands: WinningHand[];
   playerCards: Map<string, string[]>;
+  buttonSeat?: number;
+  seats: Map<number, PlayerSeat>;
 }
-
-const stageLabels: Record<HandStage, string> = {
-  preflop: 'Preflop',
-  flop: 'Flop',
-  turn: 'Turn',
-  river: 'River',
-  showdown: 'Showdown',
-};
 
 const stageVisibleCounts: Record<HandStage, number> = {
   preflop: 0,
@@ -117,7 +111,7 @@ const renderCardSlot = (key: string, variant: 'pending' | 'future'): JSX.Element
   </div>
 );
 
-const extractPokerState = (events: RoomEvent[]): PokerGameState => {
+export const extractPokerState = (events: RoomEvent[], initialPlayers: PlayerSeat[] = []): PokerGameState => {
   const state: PokerGameState = {
     pot: 0,
     currentBet: 0,
@@ -127,6 +121,7 @@ const extractPokerState = (events: RoomEvent[]): PokerGameState => {
     stage: 'preflop',
     winningHands: [],
     playerCards: new Map(),
+    seats: new Map(initialPlayers.map((player) => [player.seatNumber, { ...player }])),
   };
 
   // Parcourir les events pour extraire l'état actuel
@@ -143,6 +138,12 @@ const extractPokerState = (events: RoomEvent[]): PokerGameState => {
       }
       if (event.payload.playerName) {
         state.currentPlayer = String(event.payload.playerName);
+      }
+      if (event.payload.buttonSeat !== undefined) {
+        const parsed = Number(event.payload.buttonSeat);
+        if (Number.isFinite(parsed)) {
+          state.buttonSeat = parsed;
+        }
       }
     }
 
@@ -222,10 +223,41 @@ const extractPokerState = (events: RoomEvent[]): PokerGameState => {
           timestamp: event.timestamp,
         });
       }
+      const seatNumber = typeof event.payload.seatNumber === 'number' ? event.payload.seatNumber : undefined;
+      const playerStack = typeof event.payload.playerStack === 'number' ? Number(event.payload.playerStack) : undefined;
+      if (seatNumber !== undefined) {
+        const seatPlayer = state.seats.get(seatNumber);
+        if (seatPlayer && playerStack !== undefined) {
+          state.seats.set(seatNumber, { ...seatPlayer, stack: playerStack });
+        }
+      }
     }
 
     if (event.eventType === 'action_taken') {
       state.lastAction = event.message;
+    }
+
+    if (event.eventType === 'player_registered') {
+      const seatNumber = typeof event.payload?.seatNumber === 'number' ? event.payload.seatNumber : undefined;
+      if (seatNumber !== undefined) {
+        state.seats.set(seatNumber, {
+          playerId: String(event.payload?.playerId ?? `seat-${seatNumber}`),
+          seatNumber,
+          displayName: String(event.payload?.displayName ?? `Seat ${seatNumber}`),
+          stack: Number(event.payload?.stack ?? 0),
+        });
+      }
+    }
+
+    if (event.eventType === 'player_busted') {
+      const playerId = typeof event.payload?.playerId === 'string' ? event.payload.playerId : undefined;
+      if (playerId) {
+        for (const [seatNumber, seatPlayer] of state.seats.entries()) {
+          if (seatPlayer.playerId === playerId) {
+            state.seats.delete(seatNumber);
+          }
+        }
+      }
     }
   }
 
@@ -293,10 +325,10 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
     }
     if (previousCount === 0) {
       setTimelineIndex(0);
-      setIsPlaying(true);
-      return;
+    } else {
+      setTimelineIndex((prev) => Math.min(prev, events.length - 1));
     }
-    setTimelineIndex((prev) => Math.min(prev, events.length - 1));
+    setIsPlaying(true);
   }, [events.length]);
 
   useEffect(() => {
@@ -313,21 +345,17 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
     return () => clearTimeout(handle);
   }, [isPlaying, timelineIndex, events.length]);
 
-  const players = snapshot.summary?.players || [];
   const visibleEvents = useMemo(() => events.slice(0, timelineIndex + 1), [events, timelineIndex]);
-  const gameState = useMemo(() => extractPokerState(visibleEvents), [visibleEvents]);
+  const summaryPlayers = snapshot.summary?.players ?? [];
+  const gameState = useMemo(
+    () => extractPokerState(visibleEvents, summaryPlayers),
+    [visibleEvents, summaryPlayers],
+  );
   const currentEvent = visibleEvents.length > 0 ? visibleEvents[visibleEvents.length - 1] : undefined;
   const configuredMaxPlayers = parseSeatCount(snapshot.config.maxPlayers);
   const maxPlayers = Math.max(2, configuredMaxPlayers ?? 6);
   const seatPositions = useMemo(() => buildSeatPositions(maxPlayers), [maxPlayers]);
-  const smallBlind = parseConfigNumber(snapshot.config.smallBlind);
-  const bigBlind = parseConfigNumber(snapshot.config.bigBlind);
-  const minBuyIn = parseConfigNumber(snapshot.config.minBuyIn);
-  const maxBuyIn = parseConfigNumber(snapshot.config.maxBuyIn);
-  const startingStack = parseConfigNumber(snapshot.config.startingStack);
-  const maxHands = parseSeatCount(snapshot.config.maxHands);
   const currentStage = gameState.stage ?? 'preflop';
-  const stageLabel = stageLabels[currentStage];
   const stageVisibleCount = stageVisibleCounts[currentStage];
   const winningPlayerIds = useMemo(() => {
     const ids = new Set<string>();
@@ -339,11 +367,12 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
     return ids;
   }, [gameState.winningHands]);
 
-  const seats: (PlayerSeat | null)[] = Array(maxPlayers).fill(null);
-  players.forEach((player) => {
-    if (player.seatNumber >= 0 && player.seatNumber < maxPlayers) {
-      seats[player.seatNumber] = player;
+  const seats: (PlayerSeat | null)[] = Array.from({ length: maxPlayers }, (_, index) => {
+    const seatPlayer = gameState.seats.get(index);
+    if (seatPlayer) {
+      return seatPlayer;
     }
+    return null;
   });
 
   return (
@@ -387,6 +416,7 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
           const cardsForSeat = Array.from({ length: 2 }, (_, idx) =>
             revealCards && seatCards ? seatCards[idx] : undefined,
           );
+          const isButtonSeat = gameState.buttonSeat === seatNumber;
 
           return (
             <div key={seatNumber} style={{ ...seatStyle, position: 'absolute' }}>
@@ -404,6 +434,7 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
                   gameState.currentPlayer === player?.displayName ? 'active' : ''
                 } ${player && winningPlayerIds.has(player.playerId) ? 'winner' : ''}`}
               >
+                {isButtonSeat && <div className="dealer-button">D</div>}
                 {player ? (
                   <>
                     <div className="player-name">{player.displayName}</div>
@@ -434,119 +465,47 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
 
       {/* Informations de la partie */}
       <div className="game-info">
-        {events.length > 0 && (
-          <div className="timeline-controls">
-            <button
-              type="button"
-              onClick={() => {
-                if (timelineIndex >= events.length - 1) {
-                  setTimelineIndex(0);
-                }
-                setIsPlaying((prev) => !prev);
-              }}
-            >
-              {isPlaying ? 'Pause' : 'Play'}
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(events.length - 1, 0)}
-              value={timelineIndex}
-              onChange={(event) => {
-                setIsPlaying(false);
-                setTimelineIndex(Number(event.target.value));
-              }}
-              style={{ flex: 1, margin: '0 0.75rem' }}
-            />
-            <span className="info-value" style={{ minWidth: '4rem', textAlign: 'right' }}>
-              {events.length === 0 ? '0/0' : `${timelineIndex + 1}/${events.length}`}
-            </span>
+        <div className="timeline-event-row">
+          {events.length > 0 && (
+            <div className="timeline-controls">
+              <button
+                type="button"
+                onClick={() => {
+                  if (timelineIndex >= events.length - 1) {
+                    setTimelineIndex(0);
+                  }
+                  setIsPlaying((prev) => !prev);
+                }}
+              >
+                {isPlaying ? 'Pause' : 'Play'}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(events.length - 1, 0)}
+                value={timelineIndex}
+                onChange={(event) => {
+                  setIsPlaying(false);
+                  setTimelineIndex(Number(event.target.value));
+                }}
+                style={{ flex: 1, margin: '0 0.75rem' }}
+              />
+              <span className="info-value" style={{ minWidth: '4rem', textAlign: 'right' }}>
+                {events.length === 0 ? '0/0' : `${timelineIndex + 1}/${events.length}`}
+              </span>
+            </div>
+          )}
+          <div className="event-display">
+            {currentEvent ? (
+              <>
+                <div className="event-title">{currentEvent.eventType}</div>
+                <div className="event-message">{currentEvent.message}</div>
+              </>
+            ) : (
+              <div className="event-placeholder">Waiting for events…</div>
+            )}
           </div>
-        )}
-        <div className="info-item">
-          <span className="info-label">Status:</span>
-          <span className={`status-badge ${snapshot.summary?.status || 'waiting'}`}>
-            {snapshot.summary?.status || 'waiting'}
-          </span>
         </div>
-        <div className="info-item">
-          <span className="info-label">Hand:</span>
-          <span className="info-value">#{snapshot.summary?.handCount || 0}</span>
-        </div>
-        <div className="info-item">
-          <span className="info-label">Players:</span>
-          <span className="info-value">{players.length}/{maxPlayers}</span>
-        </div>
-        {stageLabel && (
-          <div className="info-item">
-            <span className="info-label">Stage:</span>
-            <span className="info-value">{stageLabel}</span>
-          </div>
-        )}
-        {smallBlind !== undefined && bigBlind !== undefined && (
-          <div className="info-item">
-            <span className="info-label">Blinds:</span>
-            <span className="info-value">{formatAmount(smallBlind)}/{formatAmount(bigBlind)}</span>
-          </div>
-        )}
-        {minBuyIn !== undefined && maxBuyIn !== undefined && (
-          <div className="info-item">
-            <span className="info-label">Buy-in Range:</span>
-            <span className="info-value">{formatAmount(minBuyIn)} – {formatAmount(maxBuyIn)}</span>
-          </div>
-        )}
-        {startingStack !== undefined && (
-          <div className="info-item">
-            <span className="info-label">Starting Stack:</span>
-            <span className="info-value">{formatAmount(startingStack)}</span>
-          </div>
-        )}
-        {maxHands !== undefined && (
-          <div className="info-item">
-            <span className="info-label">Max Hands:</span>
-            <span className="info-value">{maxHands}</span>
-          </div>
-        )}
-        {gameState.currentBet > 0 && (
-          <div className="info-item">
-            <span className="info-label">Current Bet:</span>
-            <span className="info-value">{formatAmount(gameState.currentBet)}</span>
-          </div>
-        )}
-        {currentEvent && (
-          <div className="info-item">
-            <span className="info-label">Event:</span>
-            <span className="info-value">{currentEvent.eventType}: {currentEvent.message}</span>
-          </div>
-        )}
-        {gameState.winningHands.length > 0 && (
-          <div className="winner-section">
-            <div className="winner-title">Showdown</div>
-            {gameState.winningHands.map((hand, idx) => (
-              <div key={`${hand.displayName}-${idx}`} className="winner-item">
-                <div>
-                  <div className="winner-name">{hand.displayName}</div>
-                  <div className="winner-description">
-                    {hand.description ?? 'Winner'}
-                    {typeof hand.amountWon === 'number' && (
-                      <span style={{ marginLeft: '0.35rem' }}>• {formatAmount(hand.amountWon)}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="winner-cards">
-                  {hand.cards.length > 0
-                    ? hand.cards.map((card, cardIdx) =>
-                        renderCard(card, `${hand.displayName}-${card}-${cardIdx}`, {
-                          small: true,
-                          delay: cardIdx * 0.05,
-                        }),
-                      )
-                    : <span className="info-value">Cards hidden</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
