@@ -9,6 +9,7 @@ const projects = [
   '../agent-player-1',
   '../agent-player-2',
   '../casino-dashboard',
+  '../dps-facilitator',
 ].map((rel) => resolve(casinoDir, rel));
 
 for (const projectPath of projects) {

@@ -129,6 +129,7 @@ If you disable auto-spawn for a game, set `DEFAULT_*_ROOM_AGENT_CARD_URL` (or `*
 | `POKER_MIN_BUY_IN` / `MIN_BUY_IN` | Min buy-in during signup | `100` |
 | `POKER_MAX_BUY_IN` / `MAX_BUY_IN` | Max buy-in | `100` |
 | `POKER_MAX_PLAYERS` / `MAX_PLAYERS` | Seats per table (clamped 2–10) | `8` |
+| `POKER_BUY_IN_PRICE` / `BUY_IN_PRICE` | USD price charged via x402 per registration | `1` |
 
 | Slot Machine | Description | Default |
 | --- | --- | --- |
@@ -148,6 +149,17 @@ If you disable auto-spawn for a game, set `DEFAULT_*_ROOM_AGENT_CARD_URL` (or `*
 | `BLACKJACK_ROUNDS` | Rounds per session (`roundsPerSession`) | `5` |
 | `BLACKJACK_DECKS` | Deck count (1–8) | `4` |
 
+#### Registration Paywall / DPS
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `DPS_FACILITATOR_URL` | Base URL for the DPS-powered x402 facilitator | `http://localhost:3002` |
+| `PAYMENTS_NETWORK` | Network identifier for USDC payments (`base`, `base-sepolia`, …) | `base-sepolia` |
+| `PAYMENTS_RECEIVABLE_ADDRESS` | Address that receives poker registration payments | _unset_ |
+| `USDC_CONTRACT_ADDRESS` | USDC token contract on the chosen network | _unset_ |
+| `DPS_PAYER_PRIVATE_KEY` | Private key the casino uses to pay DPS invoices | _unset_ |
+
+Run `bun run dev` inside `dps-facilitator/` to launch the local facilitator (copied from `old/DPS-DEMO`). The casino agent now requires this service to issue dynamic quotes, so make sure it’s running before you start the lobby.
 ### Room Agents (`poker-room-agent/`, `slot-machine-room-agent/`, `blackjack-room-agent/`)
 
 Each room agent is a Lucid agent that exposes `configureRoom`, `registerPlayer`, `startRoom`, and `roomSummary`. Rooms only speak to the casino via A2A and expect a callback pointing to the lobby’s `recordGameEvent` entrypoint.

@@ -38,6 +38,7 @@ export function App() {
         maxBuyIn: 100,
         maxHands: 1000,
         maxPlayers: 8,
+        buyInPriceUsd: 1,
       },
     };
     const fallback = fallbackDefaults[game.type] ?? {};
@@ -318,6 +319,12 @@ export function App() {
                           {roomSnapshot.config.maxBuyIn !== undefined && (
                             <div>
                               <strong>Max:</strong> {formatAmount(Number(roomSnapshot.config.maxBuyIn))}
+                            </div>
+                          )}
+                          {roomSnapshot.config.buyInPriceUsd !== undefined && (
+                            <div>
+                              <strong>Buy-in:</strong> $
+                              {formatAmount(Number(roomSnapshot.config.buyInPriceUsd))}
                             </div>
                           )}
                         </div>

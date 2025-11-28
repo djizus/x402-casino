@@ -4,6 +4,7 @@ import { createAgent } from '@lucid-agents/core';
 import { http } from '@lucid-agents/http';
 import { a2a } from '@lucid-agents/a2a';
 import { createAgentApp } from '@lucid-agents/hono';
+import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { z } from 'zod';
 
@@ -24,6 +25,7 @@ import {
 import { RoomManager, type CasinoRuntime } from './room-manager';
 import { RoomLauncher } from './room-launcher';
 import type { GameMetadata, RoomGameDefinition } from './room-definitions';
+import { PAYWALL_X402_VERSION, RegistrationPaywall } from './paywall';
 
 const toNumber = (value: string | undefined, fallback: number): number => {
   if (!value) {
@@ -87,6 +89,32 @@ if (!casinoCardUrl) {
 }
 
 const defaultGameType = process.env.DEFAULT_GAME_TYPE ?? 'poker';
+const facilitatorUrl = process.env.DPS_FACILITATOR_URL;
+const payToAddress = process.env.PAYMENTS_RECEIVABLE_ADDRESS;
+const paymentsNetwork = process.env.PAYMENTS_NETWORK ?? 'base-sepolia';
+const usdcContractAddress = process.env.USDC_CONTRACT_ADDRESS;
+const dpsPrivateKey = process.env.DPS_PAYER_PRIVATE_KEY as `0x${string}` | undefined;
+
+if (!facilitatorUrl) {
+  throw new Error('DPS_FACILITATOR_URL must be configured.');
+}
+if (!payToAddress) {
+  throw new Error('PAYMENTS_RECEIVABLE_ADDRESS must be configured.');
+}
+if (!usdcContractAddress) {
+  throw new Error('USDC_CONTRACT_ADDRESS must be configured.');
+}
+if (!dpsPrivateKey) {
+  throw new Error('DPS_PAYER_PRIVATE_KEY must be configured.');
+}
+
+const registrationPaywall = new RegistrationPaywall({
+  url: facilitatorUrl,
+  payTo: payToAddress,
+  network: paymentsNetwork,
+  usdcAddress: usdcContractAddress,
+  dpsSignerPrivateKey: dpsPrivateKey,
+});
 
 const pokerConfigSchema = z.object({
   startingStack: z.number().positive(),
@@ -96,6 +124,7 @@ const pokerConfigSchema = z.object({
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
   maxPlayers: z.number().int().min(2).max(8),
+  buyInPriceUsd: z.number().min(1).max(10),
 });
 type PokerConfig = z.infer<typeof pokerConfigSchema>;
 
@@ -128,6 +157,7 @@ const pokerDefaultConfig = pokerConfigSchema.parse({
   minBuyIn: readNumberEnv(['POKER_MIN_BUY_IN', 'MIN_BUY_IN'], 100),
   maxBuyIn: readNumberEnv(['POKER_MAX_BUY_IN', 'MAX_BUY_IN'], 100),
   maxPlayers: clampMaxPlayers(readNumberEnv(['POKER_MAX_PLAYERS', 'MAX_PLAYERS'], 8)),
+  buyInPriceUsd: Math.min(10, Math.max(1, readNumberEnv(['POKER_BUY_IN_PRICE', 'BUY_IN_PRICE'], 1))),
 });
 
 const slotDefaultConfig = slotMachineConfigSchema.parse({
@@ -162,6 +192,7 @@ const buildPokerConfig = (payload: unknown, defaults: PokerConfig = pokerDefault
     maxBuyIn: toConfigNumber(data.maxBuyIn, defaults.maxBuyIn),
     maxHands: Math.max(1, Math.round(toConfigNumber(data.maxHands, defaults.maxHands))),
     maxPlayers: clampMaxPlayers(toConfigNumber(data.maxPlayers, defaults.maxPlayers)),
+    buyInPriceUsd: Math.min(10, Math.max(1, toConfigNumber(data.buyInPriceUsd, defaults.buyInPriceUsd))),
   });
 };
 
@@ -278,6 +309,7 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
     { key: 'maxBuyIn', label: 'Max Buy-in', type: 'number', step: 0.1 },
     { key: 'maxHands', label: 'Max Hands', type: 'number', step: 1, min: 1 },
     { key: 'maxPlayers', label: 'Max Players', type: 'number', step: 1, min: 2, max: 8 },
+    { key: 'buyInPriceUsd', label: 'Buy-in Price (USD)', type: 'number', step: 0.1, min: 1, max: 10 },
   ],
   normalizeConfig: (payload) => buildPokerConfig(payload, pokerDefaultConfig),
   roomAgent: {
@@ -590,13 +622,37 @@ app.get('/ui/rooms/:roomId', async (c) => {
 app.post('/ui/rooms/:roomId/register', async (c) => {
   try {
     const roomId = c.req.param('roomId');
-    const payload = await c.req.json();
+    const snapshot = roomManager.getRoomSnapshot(roomId);
+    if (snapshot.gameType !== 'poker') {
+      return c.json({ ok: false, error: 'Registration paywall only supported for poker rooms.' }, 400);
+    }
+    const price = Number(snapshot.config.buyInPriceUsd);
+    if (!Number.isFinite(price) || price < 1) {
+      return c.json({ ok: false, error: 'Room is missing a valid buy-in price.' }, 400);
+    }
+    const paymentHeader = c.req.header('x-payment') ?? null;
+    if (!paymentHeader) {
+      const resourceUrl = buildResourceUrl(c);
+      const requirements = await registrationPaywall.createQuote(roomId, price, resourceUrl);
+      return c.json(
+        {
+          x402Version: PAYWALL_X402_VERSION,
+          error: 'Payment required',
+          accepts: [requirements],
+        },
+        402,
+      );
+    }
+    const payload = await c.req.json().catch(() => ({}));
     const input: RegisterPlayerInput = registerPlayerInputSchema.parse({
       roomId,
       ...payload,
     });
+    const paymentResponseHeader = await registrationPaywall.verifyAndSettle(roomId, paymentHeader);
     const player = await roomManager.registerPlayer(input);
-    return c.json({ ok: true, player });
+    const response = c.json({ ok: true, player });
+    response.headers.set('X-PAYMENT-RESPONSE', paymentResponseHeader);
+    return response;
   } catch (error) {
     return c.json(
       { ok: false, error: error instanceof Error ? error.message : 'Failed to register player.' },
@@ -633,3 +689,15 @@ app.get('/ui/state', async (c) => {
 });
 
 export { app };
+
+const buildResourceUrl = (c: Context): string => {
+  const rawUrl = c.req.url;
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    const host = c.req.header('host') ?? 'localhost';
+    const proto = c.req.header('x-forwarded-proto') ?? 'http';
+    return `${proto}://${host}${c.req.path}`;
+  }
+};
