@@ -132,8 +132,6 @@ const pokerConfigSchema = z.object({
   startingStack: z.number().positive(),
   smallBlind: z.number().positive(),
   bigBlind: z.number().positive(),
-  minBuyIn: z.number().positive(),
-  maxBuyIn: z.number().positive(),
   maxPlayers: z.number().int().min(2).max(8),
   buyInPriceUsd: z.number().min(1).max(10),
 });
@@ -164,8 +162,6 @@ const pokerDefaultConfig = pokerConfigSchema.parse({
   startingStack: readNumberEnv(['POKER_STARTING_STACK', 'STARTING_STACK'], 1000),
   smallBlind: readNumberEnv(['POKER_SMALL_BLIND', 'SMALL_BLIND'], 5),
   bigBlind: readNumberEnv(['POKER_BIG_BLIND', 'BIG_BLIND'], 10),
-  minBuyIn: readNumberEnv(['POKER_MIN_BUY_IN', 'MIN_BUY_IN'], 100),
-  maxBuyIn: readNumberEnv(['POKER_MAX_BUY_IN', 'MAX_BUY_IN'], 100),
   maxPlayers: clampMaxPlayers(readNumberEnv(['POKER_MAX_PLAYERS', 'MAX_PLAYERS'], 8)),
   buyInPriceUsd: Math.min(10, Math.max(1, readNumberEnv(['POKER_BUY_IN_PRICE', 'BUY_IN_PRICE'], 1))),
 });
@@ -198,8 +194,6 @@ const buildPokerConfig = (payload: unknown, defaults: PokerConfig = pokerDefault
     startingStack: toConfigNumber(data.startingStack, defaults.startingStack),
     smallBlind: toConfigNumber(data.smallBlind, defaults.smallBlind),
     bigBlind: toConfigNumber(data.bigBlind, defaults.bigBlind),
-    minBuyIn: toConfigNumber(data.minBuyIn, defaults.minBuyIn),
-    maxBuyIn: toConfigNumber(data.maxBuyIn, defaults.maxBuyIn),
     maxPlayers: clampMaxPlayers(toConfigNumber(data.maxPlayers, defaults.maxPlayers)),
     buyInPriceUsd: Math.min(10, Math.max(1, toConfigNumber(data.buyInPriceUsd, defaults.buyInPriceUsd))),
   });
@@ -314,8 +308,6 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
     { key: 'startingStack', label: 'Starting Stack', type: 'number', step: 0.1 },
     { key: 'smallBlind', label: 'Small Blind', type: 'number', step: 0.1 },
     { key: 'bigBlind', label: 'Big Blind', type: 'number', step: 0.1 },
-    { key: 'minBuyIn', label: 'Min Buy-in', type: 'number', step: 0.1 },
-    { key: 'maxBuyIn', label: 'Max Buy-in', type: 'number', step: 0.1 },
     { key: 'maxPlayers', label: 'Max Players', type: 'number', step: 1, min: 2, max: 8 },
     { key: 'buyInPriceUsd', label: 'Buy-in Price (USD)', type: 'number', step: 0.1, min: 1, max: 10 },
   ],
@@ -334,14 +326,12 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
     buildInvitation: ({ casinoName, roomId, config }) => ({
       casinoName,
       roomId,
-      minBuyIn: config.minBuyIn,
-      maxBuyIn: config.maxBuyIn,
+      buyInChips: config.startingStack,
       smallBlind: config.smallBlind,
       bigBlind: config.bigBlind,
     }),
     clampBuyIn: (value, config) => {
-      const requested = typeof value === 'number' && Number.isFinite(value) ? value : config.startingStack;
-      return Math.min(Math.max(requested, config.minBuyIn), config.maxBuyIn);
+      return typeof value === 'number' && Number.isFinite(value) ? value : config.startingStack;
     },
   },
   shouldAutoStart: ({ summary, config }) => Boolean(summary && summary.players.length >= config.maxPlayers),
@@ -377,17 +367,10 @@ const slotDefinition: RoomGameDefinition<SlotMachineConfig> = {
     buildInvitation: ({ casinoName, roomId, config }) => ({
       casinoName,
       roomId,
-      minBuyIn: config.spinCost,
-      maxBuyIn: config.spinCost * config.jackpotMultiplier * 5,
-      smallBlind: config.spinCost,
-      bigBlind: config.spinCost,
+      buyInChips: config.spinCost * config.maxSpins,
     }),
     clampBuyIn: (value, config) => {
-      const fallback = config.spinCost * 5;
-      const requested = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-      const min = config.spinCost;
-      const max = config.spinCost * config.jackpotMultiplier * 10;
-      return Math.min(Math.max(requested, min), max);
+      return typeof value === 'number' && Number.isFinite(value) ? value : config.spinCost * config.maxSpins;
     },
   },
 };
@@ -423,17 +406,10 @@ const blackjackDefinition: RoomGameDefinition<BlackjackConfig> = {
     buildInvitation: ({ casinoName, roomId, config }) => ({
       casinoName,
       roomId,
-      minBuyIn: config.minBet * 5,
-      maxBuyIn: config.startingStack * 10,
-      smallBlind: config.minBet,
-      bigBlind: config.maxBet,
+      buyInChips: config.startingStack,
     }),
     clampBuyIn: (value, config) => {
-      const fallback = config.startingStack;
-      const requested = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-      const min = config.minBet * 2;
-      const max = config.startingStack * 20;
-      return Math.min(Math.max(requested, min), max);
+      return typeof value === 'number' && Number.isFinite(value) ? value : config.startingStack;
     },
   },
   shouldAutoStart: ({ summary }) => Boolean(summary && summary.players.length > 0),

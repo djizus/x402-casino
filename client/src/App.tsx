@@ -137,8 +137,6 @@ export function App() {
         startingStack: 1000,
         smallBlind: 5,
         bigBlind: 10,
-        minBuyIn: 100,
-        maxBuyIn: 100,
         maxPlayers: 8,
         buyInPriceUsd: 1,
       },
@@ -550,16 +548,6 @@ export function App() {
                           {roomSnapshot.config.startingStack !== undefined && (
                             <div>
                               <strong>Stack:</strong> {formatAmount(Number(roomSnapshot.config.startingStack))}
-                            </div>
-                          )}
-                          {roomSnapshot.config.minBuyIn !== undefined && (
-                            <div>
-                              <strong>Min:</strong> {formatAmount(Number(roomSnapshot.config.minBuyIn))}
-                            </div>
-                          )}
-                          {roomSnapshot.config.maxBuyIn !== undefined && (
-                            <div>
-                              <strong>Max:</strong> {formatAmount(Number(roomSnapshot.config.maxBuyIn))}
                             </div>
                           )}
                           {roomSnapshot.config.buyInPriceUsd !== undefined && (

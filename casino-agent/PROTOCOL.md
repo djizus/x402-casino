@@ -20,10 +20,9 @@ Player agents implement two entrypoints and must honor the lobby’s payloads.
 const signupInvitationSchema = z.object({
   casinoName: z.string(),
   roomId: z.string(),
-  minBuyIn: z.number().positive(),
-  maxBuyIn: z.number().positive(),
-  smallBlind: z.number().positive(),
-  bigBlind: z.number().positive(),
+  buyInChips: z.number().positive(),
+  smallBlind: z.number().positive().optional(),
+  bigBlind: z.number().positive().optional(),
 });
 ```
 
@@ -77,8 +76,6 @@ const roomConfigSchema = z.object({
   startingStack: z.number().positive(),
   smallBlind: z.number().positive(),
   bigBlind: z.number().positive(),
-  minBuyIn: z.number().positive(),
-  maxBuyIn: z.number().positive(),
   maxPlayers: z.number().int().min(2).max(8),
   buyInPriceUsd: z.number().min(1).max(10),
 });

@@ -55,10 +55,9 @@ export type ActionResponse = z.infer<typeof actionResponseSchema>;
 export const signupInvitationSchema = z.object({
   casinoName: z.string(),
   roomId: z.string(),
-  minBuyIn: z.number().positive(),
-  maxBuyIn: z.number().positive(),
-  smallBlind: z.number().positive(),
-  bigBlind: z.number().positive(),
+  buyInChips: z.number().positive(),
+  smallBlind: z.number().positive().optional(),
+  bigBlind: z.number().positive().optional(),
 });
 export type SignupInvitation = z.infer<typeof signupInvitationSchema>;
 

@@ -42,8 +42,6 @@ export const roomConfigSchema = z.object({
   startingStack: z.number().positive(),
   smallBlind: z.number().positive(),
   bigBlind: z.number().positive(),
-  minBuyIn: z.number().positive(),
-  maxBuyIn: z.number().positive(),
   maxPlayers: z.number().int().min(2).max(8),
 });
 export type RoomConfig = z.infer<typeof roomConfigSchema>;
