@@ -48,7 +48,7 @@ const toConfigNumber = (value: unknown, fallback: number): number => {
 
 const clampMaxPlayers = (value: number): number => {
   const rounded = Math.round(value);
-  return Math.min(Math.max(rounded, 2), 10);
+  return Math.min(Math.max(rounded, 2), 8);
 };
 
 const readNumberEnv = (keys: string[], fallback: number): number => {
@@ -95,7 +95,7 @@ const pokerConfigSchema = z.object({
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
-  maxPlayers: z.number().int().min(2).max(10),
+  maxPlayers: z.number().int().min(2).max(8),
 });
 type PokerConfig = z.infer<typeof pokerConfigSchema>;
 
@@ -121,13 +121,13 @@ const blackjackRoomConfigSchema = z.object({
 type BlackjackConfig = z.infer<typeof blackjackRoomConfigSchema>;
 
 const pokerDefaultConfig = pokerConfigSchema.parse({
-  startingStack: readNumberEnv(['POKER_STARTING_STACK', 'STARTING_STACK'], 100),
+  startingStack: readNumberEnv(['POKER_STARTING_STACK', 'STARTING_STACK'], 1000),
   smallBlind: readNumberEnv(['POKER_SMALL_BLIND', 'SMALL_BLIND'], 5),
   bigBlind: readNumberEnv(['POKER_BIG_BLIND', 'BIG_BLIND'], 10),
-  maxHands: Math.max(1, Math.round(readNumberEnv(['POKER_MAX_HANDS', 'MAX_HANDS'], 10))),
+  maxHands: Math.max(1, Math.round(readNumberEnv(['POKER_MAX_HANDS', 'MAX_HANDS'], 1000))),
   minBuyIn: readNumberEnv(['POKER_MIN_BUY_IN', 'MIN_BUY_IN'], 100),
   maxBuyIn: readNumberEnv(['POKER_MAX_BUY_IN', 'MAX_BUY_IN'], 100),
-  maxPlayers: clampMaxPlayers(readNumberEnv(['POKER_MAX_PLAYERS', 'MAX_PLAYERS'], 6)),
+  maxPlayers: clampMaxPlayers(readNumberEnv(['POKER_MAX_PLAYERS', 'MAX_PLAYERS'], 8)),
 });
 
 const slotDefaultConfig = slotMachineConfigSchema.parse({
@@ -277,7 +277,7 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
     { key: 'minBuyIn', label: 'Min Buy-in', type: 'number', step: 0.1 },
     { key: 'maxBuyIn', label: 'Max Buy-in', type: 'number', step: 0.1 },
     { key: 'maxHands', label: 'Max Hands', type: 'number', step: 1, min: 1 },
-    { key: 'maxPlayers', label: 'Max Players', type: 'number', step: 1, min: 2, max: 10 },
+    { key: 'maxPlayers', label: 'Max Players', type: 'number', step: 1, min: 2, max: 8 },
   ],
   normalizeConfig: (payload) => buildPokerConfig(payload, pokerDefaultConfig),
   roomAgent: {

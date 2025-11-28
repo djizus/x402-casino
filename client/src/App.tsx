@@ -31,13 +31,13 @@ export function App() {
     const defaults: Record<string, string> = {};
     const fallbackDefaults: Record<string, Record<string, number>> = {
       poker: {
-        startingStack: 100,
+        startingStack: 1000,
         smallBlind: 5,
         bigBlind: 10,
         minBuyIn: 100,
         maxBuyIn: 100,
-        maxHands: 10,
-        maxPlayers: 6,
+        maxHands: 1000,
+        maxPlayers: 8,
       },
     };
     const fallback = fallbackDefaults[game.type] ?? {};
@@ -51,7 +51,8 @@ export function App() {
   const refreshLobby = useCallback(async () => {
     const data = await fetchLobbyState();
     setLobby(data);
-    setGameOptions(data.games);
+    const pokerGames = data.games.filter((game) => game.type === 'poker');
+    setGameOptions(pokerGames);
     setLoadingLobby(false);
 
     if (!selectedRoomId && data.rooms.length > 0) {
@@ -60,10 +61,13 @@ export function App() {
       setSelectedRoomId(data.rooms[0]?.roomId ?? '');
     }
 
-    const fallbackGame = data.games.find((game) => game.type === data.defaultGameType) ?? data.games[0];
-    if ((!selectedGameType || !data.games.some((game) => game.type === selectedGameType)) && fallbackGame) {
+    const fallbackGame = pokerGames.find((game) => game.type === data.defaultGameType) ?? pokerGames[0];
+    if ((!selectedGameType || !pokerGames.some((game) => game.type === selectedGameType)) && fallbackGame) {
       setSelectedGameType(fallbackGame.type);
       setCreateConfigValues(buildConfigDefaults(fallbackGame));
+    } else if (!fallbackGame && selectedGameType) {
+      setSelectedGameType('');
+      setCreateConfigValues({});
     }
   }, [selectedRoomId, selectedGameType, buildConfigDefaults]);
 
@@ -220,7 +224,7 @@ export function App() {
                   </span>
                 </div>
                 <div style={{ fontSize: '0.75rem', opacity: 0.7, display: 'flex', gap: '0.75rem' }}>
-                  <span>👥 {room.playerCount}/{room.gameType === 'poker' ? '6' : '4'}</span>
+                  <span>👥 {room.playerCount}/{room.gameType === 'poker' ? '8' : '4'}</span>
                   <span>🃏 {room.handCount} hands</span>
                 </div>
               </div>

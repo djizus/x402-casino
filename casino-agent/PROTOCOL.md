@@ -81,7 +81,7 @@ const roomConfigSchema = z.object({
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
   maxHands: z.number().int().positive(),
-  maxPlayers: z.number().int().min(2).max(10),
+  maxPlayers: z.number().int().min(2).max(8),
 });
 
 const createRoomInputSchema = z.object({

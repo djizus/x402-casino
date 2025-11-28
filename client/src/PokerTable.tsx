@@ -349,7 +349,7 @@ export function PokerTable({ snapshot, events }: PokerTableProps) {
   );
   const currentEvent = visibleEvents.length > 0 ? visibleEvents[visibleEvents.length - 1] : undefined;
   const configuredMaxPlayers = parseSeatCount(snapshot.config.maxPlayers);
-  const maxPlayers = Math.max(2, configuredMaxPlayers ?? 6);
+  const maxPlayers = Math.max(2, configuredMaxPlayers ?? 8);
   const currentStage = gameState.stage ?? 'preflop';
   const showHoleCards = currentStage === 'showdown';
   const winningPlayerIds = useMemo(() => {

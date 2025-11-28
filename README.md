@@ -122,13 +122,13 @@ If you disable auto-spawn for a game, set `DEFAULT_*_ROOM_AGENT_CARD_URL` (or `*
 
 | Poker | Description | Default |
 | --- | --- | --- |
-| `POKER_STARTING_STACK` / `STARTING_STACK` | Starting chips for each seat | `100` |
+| `POKER_STARTING_STACK` / `STARTING_STACK` | Starting chips for each seat | `1000` |
 | `POKER_SMALL_BLIND` / `SMALL_BLIND` | Small blind | `5` |
 | `POKER_BIG_BLIND` / `BIG_BLIND` | Big blind | `10` |
-| `POKER_MAX_HANDS` / `MAX_HANDS` | Hands to run per `startRoom` | `10` |
+| `POKER_MAX_HANDS` / `MAX_HANDS` | Hands to run per `startRoom` | `1000` |
 | `POKER_MIN_BUY_IN` / `MIN_BUY_IN` | Min buy-in during signup | `100` |
 | `POKER_MAX_BUY_IN` / `MAX_BUY_IN` | Max buy-in | `100` |
-| `POKER_MAX_PLAYERS` / `MAX_PLAYERS` | Seats per table (clamped 2–10) | `6` |
+| `POKER_MAX_PLAYERS` / `MAX_PLAYERS` | Seats per table (clamped 2–10) | `8` |
 
 | Slot Machine | Description | Default |
 | --- | --- | --- |
