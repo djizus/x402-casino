@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import { createPaymentHeader } from 'x402/client';
 import { exact } from 'x402/schemes';
+import { processPriceToAtomicAmount } from 'x402/shared';
 import type { PaymentPayload, PaymentRequirements } from 'x402/types';
 import { settleResponseHeader } from 'x402/types';
-import { createWalletClient, http, type Hex, getAddress } from 'viem';
+import { createWalletClient, http, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 
@@ -38,7 +39,6 @@ type FacilitatorConfig = {
   url: string;
   payTo: string;
   network: string;
-  usdcAddress: string;
   dpsSignerPrivateKey: Hex;
 };
 
@@ -48,11 +48,6 @@ const chainFromNetwork = (network: string) => {
   if (network === 'base') return base;
   if (network === 'base-sepolia' || network === 'base_testnet') return baseSepolia;
   throw new Error(`Unsupported PAYMENTS_NETWORK: ${network}`);
-};
-
-const toAtomicAmount = (usdPrice: number): string => {
-  const scaled = Math.round(usdPrice * 1_000_000);
-  return String(Math.max(scaled, 0));
 };
 
 const normalizeHex = (value: string) => {
@@ -67,7 +62,6 @@ export class RegistrationPaywall {
   private readonly facilitatorUrl: string;
   private readonly payTo: string;
   private readonly network: string;
-  private readonly usdcAddress: string;
   private readonly quotesByRoom = new Map<string, Map<string, QuoteRecord>>();
   private readonly walletClient;
 
@@ -75,7 +69,6 @@ export class RegistrationPaywall {
     this.facilitatorUrl = config.url.replace(/\/$/, '');
     this.payTo = normalizeHex(config.payTo);
     this.network = config.network;
-    this.usdcAddress = normalizeHex(config.usdcAddress);
 
     const chain = chainFromNetwork(config.network);
     const account = privateKeyToAccount(config.dpsSignerPrivateKey);
@@ -87,20 +80,28 @@ export class RegistrationPaywall {
   }
 
   public async createQuote(roomId: string, priceUsd: number, resourceUrl: string): Promise<PaymentRequirements> {
-    const atomicAmount = toAtomicAmount(priceUsd);
+    const calculation = processPriceToAtomicAmount(priceUsd, this.network);
+    if ('error' in calculation) {
+      throw new Error(calculation.error);
+    }
+    const { maxAmountRequired, asset } = calculation;
+    const assetAddress = normalizeHex(typeof asset === 'string' ? asset : asset.address);
+    const assetExtra = typeof asset === 'string' ? undefined : asset.eip712;
+
     const baseRequirements: PaymentRequirements = {
       scheme: 'exact',
       network: this.network,
-      maxAmountRequired: atomicAmount,
+      maxAmountRequired,
       resource: resourceUrl,
       description: `Poker room ${roomId} buy-in`,
       mimeType: 'application/json',
       payTo: this.payTo,
       maxTimeoutSeconds: 60,
-      asset: this.usdcAddress,
+      asset: assetAddress,
+      extra: assetExtra ? { ...assetExtra } : undefined,
     };
 
-    const quote = await this.requestDynamicQuote(baseRequirements, atomicAmount);
+    const quote = await this.requestDynamicQuote(baseRequirements, maxAmountRequired);
     await this.settleDpsInvoice(quote.dpsPaymentRequirements);
     this.rememberQuote(roomId, quote);
     return quote.paymentRequirements;

@@ -92,7 +92,6 @@ const defaultGameType = process.env.DEFAULT_GAME_TYPE ?? 'poker';
 const facilitatorUrl = process.env.DPS_FACILITATOR_URL;
 const payToAddress = process.env.PAYMENTS_RECEIVABLE_ADDRESS;
 const paymentsNetwork = process.env.PAYMENTS_NETWORK ?? 'base-sepolia';
-const usdcContractAddress = process.env.USDC_CONTRACT_ADDRESS;
 const dpsPrivateKey = process.env.DPS_PAYER_PRIVATE_KEY as `0x${string}` | undefined;
 
 if (!facilitatorUrl) {
@@ -100,9 +99,6 @@ if (!facilitatorUrl) {
 }
 if (!payToAddress) {
   throw new Error('PAYMENTS_RECEIVABLE_ADDRESS must be configured.');
-}
-if (!usdcContractAddress) {
-  throw new Error('USDC_CONTRACT_ADDRESS must be configured.');
 }
 if (!dpsPrivateKey) {
   throw new Error('DPS_PAYER_PRIVATE_KEY must be configured.');
@@ -112,7 +108,6 @@ const registrationPaywall = new RegistrationPaywall({
   url: facilitatorUrl,
   payTo: payToAddress,
   network: paymentsNetwork,
-  usdcAddress: usdcContractAddress,
   dpsSignerPrivateKey: dpsPrivateKey,
 });
 
