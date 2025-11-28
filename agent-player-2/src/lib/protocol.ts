@@ -50,7 +50,5 @@ export type SignupInvitation = z.infer<typeof signupInvitationSchema>;
 
 export const playerSignupResponseSchema = z.object({
   displayName: z.string().min(1),
-  actionSkill: z.string().min(1).default("act"),
-  buyIn: z.number().positive().optional(),
 });
 export type PlayerSignupResponse = z.infer<typeof playerSignupResponseSchema>;

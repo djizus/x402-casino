@@ -14,9 +14,6 @@ import {
 } from "./protocol";
 
 const playerName = process.env.PLAYER_DISPLAY_NAME ?? "Player One";
-const preferredBuyIn = process.env.PLAYER_BUY_IN
-  ? Number.parseInt(process.env.PLAYER_BUY_IN, 10)
-  : undefined;
 
 const GEMINI_MODEL = process.env.PLAYER_MODEL?.trim() || "gemini-1.5-pro";
 const geminiApiKey =
@@ -74,23 +71,17 @@ addEntrypoint({
   input: signupInvitationSchema,
   output: playerSignupResponseSchema,
   handler: async (ctx) => {
-    const invitation = signupInvitationSchema.parse(ctx.input);
-    const buyIn = preferredBuyIn
-      ? Math.min(Math.max(invitation.minBuyIn, preferredBuyIn), invitation.maxBuyIn)
-      : invitation.maxBuyIn;
-
+    signupInvitationSchema.parse(ctx.input);
     return {
       output: {
         displayName: playerName,
-        actionSkill: "act",
-        buyIn,
       },
     };
   },
 });
 
 addEntrypoint({
-  key: "act",
+  key: "play",
   description: "Choose a poker action based on the current table state.",
   input: actionRequestSchema,
   output: actionResponseSchema,

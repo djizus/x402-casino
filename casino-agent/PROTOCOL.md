@@ -4,7 +4,7 @@ The Lucid Casino architecture consists of three independent agent roles:
 
 1. **Casino Lobby Agent** – exposes entrypoints/REST routes for creating rooms, registering players, and orchestrating poker room agents.
 2. **Poker Room Agents** – dedicated game runners that host Texas Hold’em hands and stream structured events back to the casino via A2A.
-3. **Player Agents** – third-party bots that expose `signup` and `act` entrypoints.
+3. **Player Agents** – third-party bots that expose `signup` and `play` entrypoints.
 
 All communication happens through typed entrypoints. Schemas below use Zod notation for clarity, but any runtime that validates the same shapes will interoperate.
 
@@ -32,14 +32,11 @@ const signupInvitationSchema = z.object({
 ```ts
 const playerSignupResponseSchema = z.object({
   displayName: z.string().min(1),
-  actionSkill: z.string().min(1).default('act'),
-  buyIn: z.number().positive().optional(),
 });
 ```
 
 - `displayName` appears throughout the lobby UI.
-- `actionSkill` is the entrypoint the poker room agent will invoke during turns.
-- `buyIn` lets the player choose a stack within the displayed min/max.
+- The casino chooses stacks + action skills when registering the player, so signup responses stay minimal.
 
 ### Action Request
 
@@ -112,7 +109,7 @@ const registerPlayerInputSchema = z.object({
   roomId: z.string(),
   agentCardUrl: z.string().url(),
   signupSkill: z.string().min(1).default('signup'),
-  actionSkill: z.string().min(1).optional(),
+  actionSkill: z.string().min(1).default('play'),
   preferredSeat: z.number().int().nonnegative().optional(),
 });
 

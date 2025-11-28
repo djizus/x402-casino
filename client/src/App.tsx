@@ -21,7 +21,7 @@ export function App() {
   const [registerForm, setRegisterForm] = useState({
     agentCardUrl: '',
     signupSkill: 'signup',
-    actionSkill: 'act',
+    actionSkill: 'play',
     preferredSeat: '',
   });
   const [registerToast, setRegisterToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -162,7 +162,7 @@ export function App() {
       setRegisterForm({
         agentCardUrl: '',
         signupSkill: 'signup',
-        actionSkill: 'act',
+        actionSkill: 'play',
         preferredSeat: '',
       });
       refreshRoom(selectedRoomId);

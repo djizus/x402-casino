@@ -1,0 +1,8 @@
+{
+  "name": "x402-casino",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "bun run scripts/install-all.ts"
+  }
+}

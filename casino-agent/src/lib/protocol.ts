@@ -15,8 +15,6 @@ export type SignupInvitation = z.infer<typeof signupInvitationSchema>;
 
 export const playerSignupResponseSchema = z.object({
   displayName: z.string().min(1),
-  actionSkill: z.string().min(1).default('act'),
-  buyIn: z.number().positive().optional(),
 });
 export type PlayerSignupResponse = z.infer<typeof playerSignupResponseSchema>;
 
@@ -103,7 +101,7 @@ export const registerPlayerInputSchema = z.object({
   roomId: z.string(),
   agentCardUrl: z.string().url(),
   signupSkill: z.string().min(1).default('signup'),
-  actionSkill: z.string().min(1).optional(),
+  actionSkill: z.string().min(1).default('play'),
   preferredSeat: z.number().int().nonnegative().optional(),
 });
 export type RegisterPlayerInput = z.infer<typeof registerPlayerInputSchema>;

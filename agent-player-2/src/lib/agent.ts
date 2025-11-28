@@ -68,19 +68,17 @@ addEntrypoint({
   input: signupInvitationSchema,
   output: playerSignupResponseSchema,
   handler: async (ctx) => {
-    const invitation = signupInvitationSchema.parse(ctx.input);
+    signupInvitationSchema.parse(ctx.input);
     return {
       output: {
         displayName: playerName,
-        actionSkill: "act",
-        buyIn: invitation.maxBuyIn,
       },
     };
   },
 });
 
 addEntrypoint({
-  key: "act",
+  key: "play",
   description: "Choose an action for the current betting round.",
   input: actionRequestSchema,
   output: actionResponseSchema,

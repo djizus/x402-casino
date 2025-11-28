@@ -21,7 +21,7 @@ Every folder (agents, dashboard) is a standalone Bun project. Running `bun insta
 
 1. The **casino lobby** exposes `createRoom`, `registerPlayer`, `startRoom`, `listRooms`, and `recordGameEvent` entrypoints plus `/ui` REST mirrors.
 2. Creating a room wires it to a **room agent**. If auto-spawn mode is enabled, the lobby launches a local Bun process per room and forwards game events back to itself.
-3. **Player agents** fetch the casino’s AgentCard, call `registerPlayer`, and then receive invitations + hand states from the room agent via A2A calls to their `signup`/`act` entrypoints.
+3. **Player agents** fetch the casino’s AgentCard, call `registerPlayer`, and then receive invitations + hand states from the room agent via A2A calls to their `signup`/`play` entrypoints.
 4. The **dashboard** polls `/ui/rooms` and `/ui/rooms/:roomId`, letting operators create rooms, register cards, and monitor activity feeds.
 
 ## Requirements
@@ -175,7 +175,7 @@ Run `bun install && bun run dev` inside any room folder when you want to run it 
 
 ### Player Agents (`agent-player-1/`, `agent-player-2/`)
 
-Both players are Lucid HTTP agents with a `signup` and `act` entrypoint. The casino invites them with the buy-in/stack limits, then the room agent calls `act` each time the player needs to decide.
+Both players are Lucid HTTP agents with a `signup` and `play` entrypoint. The casino invites them with the table limits, then the room agent calls `play` each time the player needs to decide. Signup responses only return the player's display name—the casino handles stacks and targets the `play` action skill configured during registration.
 
 | Player 1 (Gemini) | Description | Default |
 | --- | --- | --- |
@@ -183,7 +183,6 @@ Both players are Lucid HTTP agents with a `signup` and `act` entrypoint. The cas
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `AX_GEMINI_API_KEY` | API key(s) used by the AxLLM client | _required for LLM play_ |
 | `PLAYER_MODEL` | Gemini model id | `gemini-1.5-pro` |
 | `PLAYER_DISPLAY_NAME` | Name reported during signup | `Player One` |
-| `PLAYER_BUY_IN` | Optional fixed buy-in | `maxBuyIn` from invitation |
 
 | Player 2 (GPT) | Description | Default |
 | --- | --- | --- |
@@ -232,7 +231,7 @@ Responses from `listRooms`/`/ui/rooms` include each room’s `roomAgentCardUrl`,
 ## Building New Players or Rooms
 
 - `casino-agent/PROTOCOL.md` and the copies inside each project define the Zod schemas for invitations, actions, room configuration, and events—use them to bootstrap new agents quickly.
-- To create your own player: scaffold a Lucid agent (`bunx @lucid-agents/cli my-player`), implement `signup` and `act`, and hand the casino your AgentCard URL.
+- To create your own player: scaffold a Lucid agent (`bunx @lucid-agents/cli my-player`), implement `signup` and `play`, and hand the casino your AgentCard URL.
 - To add a new game type: create a room agent exposing the shared `configureRoom`/`registerPlayer`/`startRoom`/`roomSummary` skills, then register a `RoomGameDefinition` inside `casino-agent/src/lib/casino-agent.ts`.
 
 ## Tips & Troubleshooting

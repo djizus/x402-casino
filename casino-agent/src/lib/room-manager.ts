@@ -202,8 +202,8 @@ export class RoomManager {
 
     const signupResult = await a2a.client.invoke(playerCard, input.signupSkill, invitation);
     const signup = playerSignupResponseSchema.parse(signupResult.output ?? {});
-    const buyIn = registration.clampBuyIn(signup.buyIn, room.config);
-    const actionSkill = input.actionSkill ?? signup.actionSkill ?? 'act';
+    const buyIn = registration.clampBuyIn(undefined, room.config);
+    const actionSkill = input.actionSkill ?? 'play';
     const playerId = randomUUID();
 
     const registerPayload = {
