@@ -7,13 +7,17 @@
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
     "build": "bun build src/index.ts --outdir=dist --target=bun",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "register": "bun run src/register.ts"
   },
   "dependencies": {
     "@lucid-agents/a2a": "latest",
     "@lucid-agents/core": "latest",
     "@lucid-agents/hono": "latest",
     "@lucid-agents/http": "latest",
+    "viem": "^2.19.9",
+    "x402": "^0.7.2",
+    "x402-fetch": "^0.7.2",
     "zod": "^4.1.12"
   },
   "devDependencies": {

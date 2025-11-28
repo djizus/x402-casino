@@ -156,7 +156,6 @@ If you disable auto-spawn for a game, set `DEFAULT_*_ROOM_AGENT_CARD_URL` (or `*
 | `DPS_FACILITATOR_URL` | Base URL for the DPS-powered x402 facilitator | `http://localhost:3002` |
 | `PAYMENTS_NETWORK` | Network identifier for USDC payments (`base`, `base-sepolia`, …) | `base-sepolia` |
 | `PAYMENTS_RECEIVABLE_ADDRESS` | Address that receives poker registration payments | _unset_ |
-| `USDC_CONTRACT_ADDRESS` | USDC token contract on the chosen network | _unset_ |
 | `DPS_PAYER_PRIVATE_KEY` | Private key the casino uses to pay DPS invoices | _unset_ |
 
 Run `bun run dev` inside `dps-facilitator/` to launch the local facilitator (copied from `old/DPS-DEMO`). The casino agent now requires this service to issue dynamic quotes, so make sure it’s running before you start the lobby.
