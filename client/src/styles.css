@@ -408,6 +408,11 @@ label {
   color: #f87171;
 }
 
+.status-badge.ended {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+
 .poker-html-ui {
   display: flex;
   flex-direction: column;

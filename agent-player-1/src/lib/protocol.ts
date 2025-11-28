@@ -62,7 +62,10 @@ export const signupInvitationSchema = z.object({
 });
 export type SignupInvitation = z.infer<typeof signupInvitationSchema>;
 
+const evmAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
+
 export const playerSignupResponseSchema = z.object({
   displayName: z.string().min(1),
+  payoutAddress: evmAddressSchema,
 });
 export type PlayerSignupResponse = z.infer<typeof playerSignupResponseSchema>;

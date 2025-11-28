@@ -22,15 +22,25 @@ import {
   roomStateSchema,
 } from './protocol';
 import { RoomGameDefinition, RoomAgentSkills } from './room-definitions';
+import { processPriceToAtomicAmount } from 'x402/shared';
+import type { PaymentRequirements } from 'x402/types';
+import { PayoutProcessor } from './payout-processor';
 
 export type CasinoRuntime = AgentRuntime & {
   a2a?: A2ARuntime;
 };
 
+const normalizeAddress = (value: string) => value.toLowerCase();
+
 interface RoomAgentHandle {
   cardUrl: string;
   card: AgentCard;
   skills: RoomAgentSkills;
+}
+
+interface PlayerProfile {
+  payoutAddress: string;
+  buyInAtomic: string;
 }
 
 interface RoomProcessHandle {
@@ -48,6 +58,9 @@ interface ManagedRoom {
   roomProcess?: RoomProcessHandle;
   summary?: RoomGameState;
   events: RoomEvent[];
+  playerProfiles: Map<string, PlayerProfile>;
+  registrationClosed: boolean;
+  payoutSettled: boolean;
 }
 
 export class RoomManager {
@@ -57,18 +70,27 @@ export class RoomManager {
   private readonly callback: { agentCardUrl: string; eventSkill: string };
   private readonly games: Map<string, RoomGameDefinition>;
   private readonly defaultGameType: string;
+  private readonly paymentsNetwork: PaymentRequirements['network'];
+  private readonly payoutProcessor?: PayoutProcessor;
 
   constructor(
     runtime: CasinoRuntime,
     casinoName: string,
     callback: { agentCardUrl: string; eventSkill: string },
-    options: { games: Map<string, RoomGameDefinition>; defaultGameType?: string },
+    options: {
+      games: Map<string, RoomGameDefinition>;
+      defaultGameType?: string;
+      paymentsNetwork: PaymentRequirements['network'];
+      payoutProcessor?: PayoutProcessor;
+    },
   ) {
     this.runtime = runtime;
     this.casinoName = casinoName;
     this.callback = callback;
     this.games = options.games;
     this.defaultGameType = options.defaultGameType ?? 'poker';
+    this.paymentsNetwork = options.paymentsNetwork;
+    this.payoutProcessor = options.payoutProcessor;
   }
 
   public listRooms(): RoomSummary[] {
@@ -171,6 +193,9 @@ export class RoomManager {
       roomProcess,
       summary: undefined,
       events: [],
+      playerProfiles: new Map(),
+      registrationClosed: false,
+      payoutSettled: false,
     };
 
     try {
@@ -188,6 +213,9 @@ export class RoomManager {
     if (!room.definition.supportsRegistration || !room.definition.registration) {
       throw new Error(`Room ${room.roomId} does not accept player registrations.`);
     }
+    if (room.registrationClosed || room.summary?.status === 'ended') {
+      throw new Error(`Room ${room.roomId} is closed for new registrations.`);
+    }
     const registration = room.definition.registration;
     const a2a = this.ensureA2A();
 
@@ -202,9 +230,13 @@ export class RoomManager {
 
     const signupResult = await a2a.client.invoke(playerCard, input.signupSkill, invitation);
     const signup = playerSignupResponseSchema.parse(signupResult.output ?? {});
+    if (!signup.payoutAddress) {
+      throw new Error('Player did not provide a payout address during signup.');
+    }
     const buyIn = registration.clampBuyIn(undefined, room.config);
     const actionSkill = input.actionSkill ?? 'play';
     const playerId = randomUUID();
+    const buyInAtomic = this.calculateBuyInAtomic(room.config);
 
     const registerPayload = {
       playerId,
@@ -220,15 +252,27 @@ export class RoomManager {
       roomId: room.roomId,
       ...(result.output ?? {}),
     });
+    const normalizedAddress = normalizeAddress(signup.payoutAddress);
+    room.playerProfiles.set(parsed.playerId, {
+      payoutAddress: normalizedAddress,
+      buyInAtomic,
+    });
 
     await this.refreshSummary(room);
     await this.maybeAutoStart(room);
-    return parsed;
+    return {
+      ...parsed,
+      payoutAddress: normalizedAddress,
+    };
   }
 
   public async startRoom(input: StartRoomInput): Promise<RoomGameState> {
     const room = this.requireRoom(input.roomId);
+    if (room.summary?.status === 'ended') {
+      throw new Error(`Room ${room.roomId} has already ended.`);
+    }
     const a2a = this.ensureA2A();
+    room.registrationClosed = true;
 
     const payload = {
       ...(input.overrides ?? {}),
@@ -236,6 +280,7 @@ export class RoomManager {
     const result = await a2a.client.invoke(room.roomAgent.card, room.roomAgent.skills.start, payload);
     const summary = roomStateSchema.parse(result.output ?? {});
     room.summary = summary;
+    await this.settleRoomPayout(room);
     return summary;
   }
 
@@ -296,7 +341,7 @@ export class RoomManager {
     if (!room.summary) {
       return;
     }
-    if (room.summary.status === 'running') {
+    if (room.summary.status === 'running' || room.summary.status === 'ended') {
       return;
     }
     const shouldStart = room.definition.shouldAutoStart({
@@ -327,6 +372,18 @@ export class RoomManager {
     return this.runtime.a2a;
   }
 
+  private calculateBuyInAtomic(config: RoomConfig): string {
+    const price = Number((config as Record<string, unknown>).buyInPriceUsd);
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new Error('Room configuration is missing a valid buy-in price.');
+    }
+    const conversion = processPriceToAtomicAmount(price, this.paymentsNetwork);
+    if ('error' in conversion) {
+      throw new Error(conversion.error);
+    }
+    return conversion.maxAmountRequired;
+  }
+
   private requireRoom(roomId: string): ManagedRoom {
     const room = this.rooms.get(roomId);
     if (!room) {
@@ -350,6 +407,80 @@ export class RoomManager {
   private async refreshSummary(room: ManagedRoom): Promise<void> {
     const a2a = this.ensureA2A();
     const result = await a2a.client.invoke(room.roomAgent.card, room.roomAgent.skills.summary, {});
-    room.summary = roomStateSchema.parse(result.output ?? {});
+    const parsed = roomStateSchema.parse(result.output ?? {});
+    room.summary = {
+      ...parsed,
+      players: parsed.players.map((player) => ({
+        ...player,
+        payoutAddress: room.playerProfiles.get(player.playerId)?.payoutAddress,
+      })),
+    };
+    await this.settleRoomPayout(room);
+  }
+
+  private calculateTotalPotAtomic(room: ManagedRoom): bigint {
+    let total = 0n;
+    for (const profile of room.playerProfiles.values()) {
+      total += BigInt(profile.buyInAtomic);
+    }
+    return total;
+  }
+
+  private async settleRoomPayout(room: ManagedRoom): Promise<void> {
+    if (room.payoutSettled) {
+      return;
+    }
+    if (room.summary?.status !== 'ended') {
+      return;
+    }
+    const winner = room.summary.players[0];
+    if (!winner) {
+      room.payoutSettled = true;
+      return;
+    }
+    const profile = room.playerProfiles.get(winner.playerId);
+    if (!profile?.payoutAddress) {
+      console.warn(`[casino-agent] Missing payout address for winner ${winner.playerId}.`);
+      room.payoutSettled = true;
+      return;
+    }
+    const totalAtomic = this.calculateTotalPotAtomic(room);
+    if (totalAtomic === 0n) {
+      room.payoutSettled = true;
+      return;
+    }
+    if (!this.payoutProcessor) {
+      console.warn(
+        `[casino-agent] Payout processor not configured. Skipping payout of ${totalAtomic} wei to ${profile.payoutAddress}.`,
+      );
+      room.payoutSettled = true;
+      return;
+    }
+    try {
+      await this.payoutProcessor.sendPayout({
+        roomId: room.roomId,
+        payTo: profile.payoutAddress,
+        amountAtomic: totalAtomic,
+        description: `Room ${room.roomId} payout`,
+      });
+      room.payoutSettled = true;
+      const payoutEvent: RoomEvent = {
+        roomId: room.roomId,
+        eventType: 'room_status',
+        message: `Paid out winnings to ${winner.displayName}.`,
+        timestamp: new Date().toISOString(),
+        payload: {
+          winnerId: winner.playerId,
+          payoutAddress: profile.payoutAddress,
+          amountAtomic: totalAtomic.toString(),
+        },
+      };
+      room.events.push(payoutEvent);
+      if (room.events.length > 200) {
+        room.events.shift();
+      }
+    } catch (error) {
+      console.error('[casino-agent] Failed to settle payout:', error);
+    }
   }
 }

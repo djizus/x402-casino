@@ -23,7 +23,7 @@ import { Table } from './engine/table';
 import { DealerAction, type DealerActionRange, type PotResolution } from './engine/dealer';
 import { RoundOfBetting } from './engine/community-cards';
 
-type RoomStatus = 'waiting' | 'running' | 'idle' | 'error';
+type RoomStatus = 'waiting' | 'running' | 'idle' | 'error' | 'ended';
 const CHIP_EPSILON = 1e-6;
 type HandStage = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
 
@@ -183,6 +183,9 @@ export class PokerRoom {
     if (this.status === 'running') {
       throw new Error('A hand is already running.');
     }
+    if (this.status === 'ended') {
+      throw new Error('This room has already ended.');
+    }
 
     const config: RoomConfig = {
       ...this.roomConfig,
@@ -196,18 +199,14 @@ export class PokerRoom {
 
     this.status = 'running';
     this.lastMessage = undefined;
-    await this.publishEvent('hand_started', `Starting session of ${config.maxHands} hand${config.maxHands === 1 ? '' : 's'} at ${this.roomId}.`, {
-      maxHands: config.maxHands,
-    });
+    await this.publishEvent('hand_started', `Starting winner-takes-all session at ${this.roomId}.`, {});
 
     const initialHandCount = this.handCount;
-    let bustedSeat: RegisteredPlayer | undefined;
-
     try {
-      for (let handIndex = 0; handIndex < config.maxHands; handIndex += 1) {
+      while (this.players.size > 1) {
         await this.playHand(config);
         this.handCount += 1;
-        bustedSeat = this.findBankruptSeat();
+        const bustedSeat = this.findBankruptSeat();
         if (bustedSeat) {
           await this.publishEvent('player_busted', `${bustedSeat.displayName} is out of chips.`, {
             playerId: bustedSeat.id,
@@ -215,16 +214,23 @@ export class PokerRoom {
           this.table?.standUp(bustedSeat.seatNumber);
           this.seatAssignments.delete(bustedSeat.seatNumber);
           this.players.delete(bustedSeat.id);
-          break;
         }
       }
 
       const handsPlayed = this.handCount - initialHandCount;
-      this.status = 'idle';
-      this.lastMessage = bustedSeat
-        ? `Session stopped after ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'} (${bustedSeat.displayName} busted).`
-        : `Completed ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'}.`;
-      await this.publishEvent('hand_completed', this.lastMessage, { handsPlayed });
+      if (this.players.size === 1) {
+        const winner = Array.from(this.players.values())[0];
+        this.status = 'ended';
+        this.lastMessage = `${winner.displayName} won the table.`;
+        await this.publishEvent('room_ended', this.lastMessage, {
+          winnerId: winner.id,
+          stack: winner.stack,
+        });
+      } else {
+        this.status = 'idle';
+        this.lastMessage = `Stopped after ${handsPlayed} hand${handsPlayed === 1 ? '' : 's'}.`;
+        await this.publishEvent('hand_completed', this.lastMessage, { handsPlayed });
+      }
     } catch (error) {
       this.status = 'error';
       this.lastMessage = error instanceof Error ? error.message : 'Unknown error occurred.';

@@ -44,7 +44,6 @@ export const roomConfigSchema = z.object({
   bigBlind: z.number().positive(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
-  maxHands: z.number().int().positive(),
   maxPlayers: z.number().int().min(2).max(8),
 });
 export type RoomConfig = z.infer<typeof roomConfigSchema>;
@@ -73,7 +72,7 @@ export type PlayerSeatSummary = z.infer<typeof playerSeatSchema>;
 
 export const roomSummarySchema = z.object({
   roomId: z.string(),
-  status: z.enum(['waiting', 'running', 'idle', 'error']),
+  status: z.enum(['waiting', 'running', 'idle', 'error', 'ended']),
   handCount: z.number().int().nonnegative(),
   players: z.array(playerSeatSchema),
   message: z.string().optional(),
@@ -100,7 +99,6 @@ export type RegisterPlayerResult = z.infer<typeof registerPlayerResultSchema>;
 
 export const startGameInputSchema = z
   .object({
-    maxHands: z.number().int().positive().optional(),
     smallBlind: z.number().positive().optional(),
     bigBlind: z.number().positive().optional(),
   })
@@ -119,6 +117,7 @@ export const roomEventSchema = z.object({
     'player_busted',
     'room_error',
     'room_status',
+    'room_ended',
   ]),
   message: z.string(),
   timestamp: z.string(),

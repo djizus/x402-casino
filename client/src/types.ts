@@ -3,11 +3,12 @@ export type PlayerSeat = {
   seatNumber: number;
   displayName: string;
   stack: number;
+  payoutAddress?: string;
 };
 
 export type RoomStateSummary = {
   roomId: string;
-  status: 'waiting' | 'running' | 'idle' | 'error';
+  status: 'waiting' | 'running' | 'idle' | 'error' | 'ended';
   players: PlayerSeat[];
   handCount: number;
   message?: string;
@@ -25,7 +26,8 @@ export type RoomEvent = {
     | 'hand_completed'
     | 'player_busted'
     | 'room_error'
-    | 'room_status';
+    | 'room_status'
+    | 'room_ended';
   message: string;
   timestamp: string;
   payload?: Record<string, unknown>;
@@ -36,7 +38,7 @@ export type RoomSummary = {
   gameType: string;
   roomAgentCardUrl: string;
   roomBaseUrl?: string;
-  status: 'waiting' | 'running' | 'idle' | 'error';
+  status: 'waiting' | 'running' | 'idle' | 'error' | 'ended';
   handCount: number;
   playerCount: number;
   message?: string;

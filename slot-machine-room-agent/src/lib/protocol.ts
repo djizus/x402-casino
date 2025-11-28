@@ -34,7 +34,7 @@ export type PlayerSeatSummary = z.infer<typeof playerSeatSchema>;
 
 export const roomSummarySchema = z.object({
   roomId: z.string(),
-  status: z.enum(['waiting', 'running', 'idle', 'error']),
+  status: z.enum(['waiting', 'running', 'idle', 'error', 'ended']),
   handCount: z.number().int().nonnegative(),
   players: z.array(playerSeatSchema),
   message: z.string().optional(),

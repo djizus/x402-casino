@@ -41,7 +41,7 @@ This template accepts the following configuration arguments (see `template.schem
 - `AGENT_VERSION` - Semantic version (e.g., "0.1.0")
 - `PAYMENTS_FACILITATOR_URL` - x402 facilitator endpoint
 - `PAYMENTS_NETWORK` - Network identifier (e.g., "base-sepolia")
-- `PAYMENTS_RECEIVABLE_ADDRESS` - Address that receives payments
+- `PAYMENTS_RECEIVABLE_ADDRESS` - Address that receives buy-in payouts (required)
 - `PRIVATE_KEY` - Wallet private key (optional)
 
 Additionally, you'll need LLM API keys in `.env`:

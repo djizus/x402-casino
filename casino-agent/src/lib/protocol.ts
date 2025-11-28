@@ -13,8 +13,11 @@ export const signupInvitationSchema = z.object({
 });
 export type SignupInvitation = z.infer<typeof signupInvitationSchema>;
 
+const evmAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
+
 export const playerSignupResponseSchema = z.object({
   displayName: z.string().min(1),
+  payoutAddress: evmAddressSchema,
 });
 export type PlayerSignupResponse = z.infer<typeof playerSignupResponseSchema>;
 
@@ -23,12 +26,13 @@ export const playerSeatSchema = z.object({
   seatNumber: z.number().int().nonnegative(),
   displayName: z.string(),
   stack: z.number().nonnegative(),
+  payoutAddress: evmAddressSchema.optional(),
 });
 export type PlayerSeat = z.infer<typeof playerSeatSchema>;
 
 export const roomStateSchema = z.object({
   roomId: z.string(),
-  status: z.enum(['waiting', 'running', 'idle', 'error']),
+  status: z.enum(['waiting', 'running', 'idle', 'error', 'ended']),
   handCount: z.number().int().nonnegative(),
   players: z.array(playerSeatSchema),
   message: z.string().optional(),
@@ -46,6 +50,7 @@ export const roomEventSchema = z.object({
     'player_busted',
     'room_error',
     'room_status',
+    'room_ended',
   ]),
   message: z.string(),
   timestamp: z.string(),
@@ -58,7 +63,7 @@ export const roomSummarySchema = z.object({
   gameType: z.string(),
   roomAgentCardUrl: z.string().url(),
   roomBaseUrl: z.string().url().optional(),
-  status: z.enum(['waiting', 'running', 'idle', 'error']),
+  status: z.enum(['waiting', 'running', 'idle', 'error', 'ended']),
   handCount: z.number().int().nonnegative(),
   playerCount: z.number().int().nonnegative(),
   message: z.string().optional(),
@@ -112,6 +117,7 @@ export const registerPlayerResultSchema = z.object({
   seatNumber: z.number().int().nonnegative(),
   displayName: z.string(),
   stack: z.number().nonnegative(),
+  payoutAddress: evmAddressSchema.optional(),
 });
 export type RegisterPlayerResult = z.infer<typeof registerPlayerResultSchema>;
 

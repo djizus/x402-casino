@@ -1,242 +1,215 @@
-# Lucid Casino Agents
+# X402 Casino Playground
 
-Lucid Casino is a miniature playground for the Lucid Agents framework. A casino **lobby agent** exposes typed entrypoints and REST routes, **room agents** (Texas Hold’em, a slot machine, Blackjack) handle gameplay, **player agents** sit at tables through A2A, and a **React dashboard** keeps operators in the loop. The projects are intentionally lightweight so you can study a multi-agent system end-to-end and remix any of the components for your own rooms or players.
+This repository is a miniature ecosystem of Lucid agents that run a casino lobby, spin up poker/slot/blackjack rooms, invite third‑party player agents, enforce paid registrations via x402, and expose a React dashboard for operators. Each directory contains an independent Bun project so you can study, extend, or replace any tier of the stack.
 
-## Repository Layout
+## What Lives Here?
 
-| Path | Role | Notes |
+| Path | Role | Highlights |
 | --- | --- | --- |
-| `casino-agent/` | Lobby + REST API | Coordinates rooms, relays registrations, records events, auto-spawns room agents |
-| `poker-room-agent/` | Game agent | No-limit Texas Hold’em engine with buy-in enforcement and typed entrypoints |
-| `slot-machine-room-agent/` | Game agent | Multi-player slot machine simulator capable of batching spins |
-| `blackjack-room-agent/` | Game agent | Blackjack vs. dealer with configurable stacks, bets, and decks |
-| `agent-player-1/` | Player template | Gemini-backed player that falls back to heuristics |
-| `agent-player-2/` | Player template | GPT-backed player that prefers pressure play |
-| `casino-dashboard/` | Operator UI | Vite/React dashboard hitting `/ui/*` routes |
-| `README_LUCID_AGENTS.md` | Reference | High-level docs for the Lucid Agents framework itself |
+| `casino-agent/` | **Lobby + REST API** | Orchestrates rooms, relays registrations, records events, handles x402 buy‑ins and payouts |
+| `poker-room-agent/` | Poker room agent | No-limit Hold’em engine, pauses only when a single player remains |
+| `slot-machine-room-agent/` | Slot room agent | Multiplayer slot simulator with configurable reels/bets |
+| `blackjack-room-agent/` | Blackjack room agent | Dealer vs. players with adjustable stacks, bets, decks |
+| `agent-player-1/` | Sample player | Gemini-backed agent with deterministic fallback strategy |
+| `agent-player-2/` | Sample player | GPT-backed agent with configurable aggression |
+| `client/` | Dashboard | Vite/React UI for room management and live event feeds |
+| `dps-facilitator/` | DPS demo | Minimal facilitator used for issuing and settling x402 quotes |
+| `scripts/install-all.ts` | Tooling | Installs dependencies for every sub-project in a single `bun install` |
 
-Every folder (agents, dashboard) is a standalone Bun project. Running `bun install` inside `casino-agent` triggers a `postinstall` script (`scripts/install-all.ts`) that installs all subprojects so you only need a single install command.
+`README_LUCID_AGENTS.md` contains extra background on Lucid Agents if you are new to the framework.
 
-## Architecture at a Glance
+---
 
-1. The **casino lobby** exposes `createRoom`, `registerPlayer`, `startRoom`, `listRooms`, and `recordGameEvent` entrypoints plus `/ui` REST mirrors.
-2. Creating a room wires it to a **room agent**. If auto-spawn mode is enabled, the lobby launches a local Bun process per room and forwards game events back to itself.
-3. **Player agents** fetch the casino’s AgentCard, call `registerPlayer`, and then receive invitations + hand states from the room agent via A2A calls to their `signup`/`play` entrypoints.
-4. The **dashboard** polls `/ui/rooms` and `/ui/rooms/:roomId`, letting operators create rooms, register cards, and monitor activity feeds.
+## Architecture Overview
 
-## Requirements
+```
+Player Agents  ──A2A──► Room Agents ──A2A──► Casino Lobby ──REST/WS──► Dashboard
+                            ▲                │                     │
+                            │                │                     └─ Operator tools
+                            └────── Events ──┘
 
-- [Bun](https://bun.sh) ≥ 1.0 (Node 20+ also works but Bun tooling is the default)
-- API keys for whichever model(s) you want the player agents to use:
-  - Player 1: `GEMINI_API_KEY` or `GOOGLE_API_KEY`
-  - Player 2: `OPENAI_API_KEY`
-- A reachable AgentCard URL for the casino lobby (`CASINO_AGENT_CARD_URL`)
-- Optional: wallets, additional Lucid extensions, or any other runtime configuration supported by Lucid Agents
+Payments: Player ▷ x402 buy-in via DPS facilitator ▷ Casino  
+          Casino ◁ x402 payout (winner takes entire pot)
+```
 
-## Quick Start
+1. **Casino Lobby** (`casino-agent/`) exposes Lucid entrypoints and `/ui/*` REST mirrors for creating rooms, registering player cards, starting games, and streaming events.
+2. **Room Agents** (poker, slot, blackjack) only speak Lucid A2A. The lobby configures them, forwards player registrations, and subscribes to their events.
+3. **Player Agents** implement `signup` and `play`. When the lobby registers a player, it first issues an x402 quote and charges the buy‑in before forwarding the request to the room.
+4. **Dashboard** polls the lobby to visualize tables, register agents manually, and trigger starts if the room type requires it.
 
-1. **Clone and install dependencies**
+---
+
+## Payment & Wallet Flow
+
+1. **Registration Paywall** – when a player registers for a poker room, the lobby issues an x402 quote via `dps-facilitator`. The React dashboard surfaces the quote and lets an operator pay with a Base/Base‑Sepolia wallet. The casino settles the facilitator invoice and forwards the `registerPlayer` call only after payment succeeds.
+2. **Winner Payouts** – once the room reports `status: ended` (only one player remains), the lobby sums the original buy‑ins and creates a fresh x402 payment targeting the winner’s `payoutAddress` (advertised during signup). The facilitator verifies/settles the payout and the lobby logs a `room_status` event confirming the transfer.
+
+To wire this up you **must** configure:
+
+| Variable | Description |
+| --- | --- |
+| `DPS_FACILITATOR_URL` | URL of the DPS/x402 facilitator (use the local demo in `dps-facilitator/` during development) |
+| `PAYMENTS_NETWORK` | Network identifier (`base`, `base-sepolia`, etc.). Both buy‑ins and payouts use the same network. |
+| `PAYMENTS_RECEIVABLE_ADDRESS` | Casino wallet receiving registration fees |
+| `DPS_PAYER_PRIVATE_KEY` | Private key the casino uses to settle facilitator invoices for buy‑ins |
+| `PAYOUT_PRIVATE_KEY` | Private key used to pay out winners (can be the same as above) |
+
+player agents must also return a `payoutAddress` from their `signup` entrypoint.
+
+---
+
+## Prerequisites
+
+- [Bun](https://bun.sh) ≥ 1.0 (Node 20+ works but Bun is the default runtime)
+- Access to an LLM if you want the sample players to do more than heuristics (`GEMINI_API_KEY` or `OPENAI_API_KEY`)
+- Wallet credentials for the x402 buy‑in/payout flow on Base or Base Sepolia
+- A reachable AgentCard URL for the casino lobby (the room agents need it to publish events)
+
+---
+
+## Getting Started
+
+1. **Install everything once**
    ```bash
    cd casino-agent
-   bun install
+   bun install        # installs deps for every subproject via scripts/install-all.ts
    ```
-   The `postinstall` script installs dependencies for every sub-project so you’re ready to boot any component.
 
-2. **Start the casino lobby (auto-spawns room agents by default)**
+2. **Run the DPS facilitator**
+   ```bash
+   cd dps-facilitator
+   bun install
+   bun run dev        # http://localhost:3002 by default
+   ```
+
+3. **Launch the casino lobby**
    ```bash
    cd casino-agent
    CASINO_AGENT_CARD_URL=http://localhost:4000/.well-known/agent-card.json \
+   DPS_FACILITATOR_URL=http://localhost:3002 \
+   PAYMENTS_NETWORK=base-sepolia \
+   PAYMENTS_RECEIVABLE_ADDRESS=0xYourCasinoWallet \
+   DPS_PAYER_PRIVATE_KEY=0x... \
+   PAYOUT_PRIVATE_KEY=0x... \
    ROOM_AGENT_AUTOSPAWN=true \
    SLOT_ROOM_AGENT_AUTOSPAWN=true \
    BLACKJACK_ROOM_AGENT_AUTOSPAWN=true \
    PORT=4000 bun run dev
    ```
-   Override the env vars documented below to pin different ports, attach remote room agents, or disable auto-spawn behavior.
+   Auto-spawn launches local poker/slot/blackjack agents. Disable it if you prefer attaching remote rooms through their AgentCards.
 
-3. **Run the player agents**
+4. **Start the React dashboard**
    ```bash
-   # Player 1 (Gemini, defaults to gemini-1.5-pro)
-   cd agent-player-1
-   GEMINI_API_KEY=... PORT=4101 bun run dev
-
-   # Player 2 (GPT, defaults to gpt-4.1-mini)
-   cd agent-player-2
-   OPENAI_API_KEY=... PORT=4102 bun run dev
-   ```
-   Each player publishes `.well-known/agent-card.json`. Supply those URLs when registering with a room.
-
-4. **Launch the dashboard**
-   ```bash
-   cd casino-dashboard
+   cd client
    bun install
-   bun run dev
+   bun run dev        # defaults to http://localhost:5173 and calls http://localhost:4000
    ```
-   Point your browser at the dev server (default `http://localhost:5173`). The UI hits `http://localhost:4000` unless you override `VITE_CASINO_URL`.
 
-5. **Create rooms and start games**
-   - Create a room in the dashboard or via `POST /ui/rooms`
-   - Register player cards with `/ui/rooms/:roomId/register`
-   - Poker starts automatically once seats are full; slots and blackjack can be kicked off manually from the dashboard or by calling `/ui/rooms/:roomId/start`
+5. **Start player agents (optional, you can also register any custom agent)**
+   ```bash
+   # Gemini player
+   cd agent-player-1
+   GEMINI_API_KEY=... PAYOUT_ADDRESS=0xWinnerWallet PORT=4101 bun run dev
 
-## Service Guides
+   # GPT player
+   cd agent-player-2
+   OPENAI_API_KEY=... PAYOUT_ADDRESS=0xWinnerWallet PORT=4102 bun run dev
+   ```
 
-### Casino Lobby (`casino-agent/`)
+6. **Manage rooms**
+   - Use the dashboard to create a poker/slot/blackjack room (the poker defaults mirror `POKER_*` env vars).
+   - Register player AgentCards. The dashboard will show the x402 quote and let you pay with a Base/Base‑Sepolia wallet.
+   - Poker rooms auto-start when eligible seats are filled. Slots/blackjack can be started manually from the UI or through the REST endpoint.
 
-The lobby is a Lucid HTTP agent + REST API that manages room lifecycles, launches embedded room agents, proxies registration, and records game events for UI consumption.
+---
 
-```bash
-cd casino-agent
-CASINO_AGENT_CARD_URL=http://localhost:4000/.well-known/agent-card.json \
-PORT=4000 bun run dev
-```
+## Room Agents
 
-- Auto-launches poker, slot, and blackjack agents by default (uses Bun to spawn `src/index.ts` inside each project)
-- `RoomManager` keeps track of all rooms, snapshots, events, and handles graceful shutdown
-- `/ui/state` exposes a combined summary useful for debugging outside the dashboard
+Every room agent exposes the same Lucid entrypoints:
 
-#### Core Environment Variables
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `CASINO_AGENT_CARD_URL` | Public AgentCard URL (required so room agents can send callbacks) | _none_ |
-| `CASINO_AGENT_NAME` | Name shown in cards + invitations | `casino-agent` |
-| `CASINO_AGENT_VERSION` / `CASINO_AGENT_DESCRIPTION` | Metadata for the AgentCard | `0.2.0` / canned text |
-| `PORT` | HTTP port for the lobby | `4000` |
-| `DEFAULT_GAME_TYPE` | Initial selection in UI + default when omitted in requests (`poker`, `slot-machine`, `blackjack`) | `poker` |
-
-#### Embedded Room Launchers
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `ROOM_AGENT_AUTOSPAWN` | Enable/disable local poker room spawning (`false` when attaching remote rooms) | `true` |
-| `ROOM_AGENT_WORKDIR` | Folder for the poker room template | `../poker-room-agent` |
-| `ROOM_AGENT_BIN` / `ROOM_AGENT_ARGS` | Command + args used to start poker rooms | `bun` / `run src/index.ts` |
-| `ROOM_AGENT_PORT_START` / `ROOM_AGENT_PORT_END` | Port range to choose from when spawning poker rooms | `4500`–`4600` |
-| `DEFAULT_ROOM_AGENT_CARD_URL` | Static poker room card when not auto-spawning | _unset_ |
-| `SLOT_ROOM_AGENT_*` | Same knobs for slot rooms (`../slot-machine-room-agent`, ports `4700`–`4800`) | varies |
-| `BLACKJACK_ROOM_AGENT_*` | Same knobs for blackjack rooms (`../blackjack-room-agent`, ports `4800`–`4900`) | varies |
-
-If you disable auto-spawn for a game, set `DEFAULT_*_ROOM_AGENT_CARD_URL` (or `*_ROOM_AGENT_CARD_URL`) to your deployed room agent’s card so the casino can configure it.
-
-#### Default Game Config Overrides
-
-| Poker | Description | Default |
-| --- | --- | --- |
-| `POKER_STARTING_STACK` / `STARTING_STACK` | Starting chips for each seat | `1000` |
-| `POKER_SMALL_BLIND` / `SMALL_BLIND` | Small blind | `5` |
-| `POKER_BIG_BLIND` / `BIG_BLIND` | Big blind | `10` |
-| `POKER_MAX_HANDS` / `MAX_HANDS` | Hands to run per `startRoom` | `1000` |
-| `POKER_MIN_BUY_IN` / `MIN_BUY_IN` | Min buy-in during signup | `100` |
-| `POKER_MAX_BUY_IN` / `MAX_BUY_IN` | Max buy-in | `100` |
-| `POKER_MAX_PLAYERS` / `MAX_PLAYERS` | Seats per table (clamped 2–10) | `8` |
-| `POKER_BUY_IN_PRICE` / `BUY_IN_PRICE` | USD price charged via x402 per registration | `1` |
-
-| Slot Machine | Description | Default |
-| --- | --- | --- |
-| `SLOT_MAX_PLAYERS` | Room capacity | `4` |
-| `SLOT_MAX_SPINS` | Spins per batch | `20` |
-| `SLOT_SPIN_COST` | Credits burned per spin | `1` |
-| `SLOT_JACKPOT_MULTIPLIER` | Jackpot payout multiplier | `25` |
-| `SLOT_PAIR_MULTIPLIER` | Pair payout multiplier | `3` |
-| `SLOT_REELS` | Reel count (3–5) | `3` |
-
-| Blackjack | Description | Default |
-| --- | --- | --- |
-| `BLACKJACK_MAX_PLAYERS` | Seats per room (1–6) | `4` |
-| `BLACKJACK_STARTING_STACK` | Chips given to each player | `20` |
-| `BLACKJACK_MIN_BET` / `BLACKJACK_MAX_BET` | Betting bounds | `1` / `5` |
-| `BLACKJACK_BLACKJACK_PAYOUT` | Blackjack payout ratio | `1.5` |
-| `BLACKJACK_ROUNDS` | Rounds per session (`roundsPerSession`) | `5` |
-| `BLACKJACK_DECKS` | Deck count (1–8) | `4` |
-
-#### Registration Paywall / DPS
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `DPS_FACILITATOR_URL` | Base URL for the DPS-powered x402 facilitator | `http://localhost:3002` |
-| `PAYMENTS_NETWORK` | Network identifier for USDC payments (`base`, `base-sepolia`, …) | `base-sepolia` |
-| `PAYMENTS_RECEIVABLE_ADDRESS` | Address that receives poker registration payments | _unset_ |
-| `DPS_PAYER_PRIVATE_KEY` | Private key the casino uses to pay DPS invoices | _unset_ |
-
-Run `bun run dev` inside `dps-facilitator/` to launch the local facilitator (copied from `old/DPS-DEMO`). The casino agent now requires this service to issue dynamic quotes, so make sure it’s running before you start the lobby.
-### Room Agents (`poker-room-agent/`, `slot-machine-room-agent/`, `blackjack-room-agent/`)
-
-Each room agent is a Lucid agent that exposes `configureRoom`, `registerPlayer`, `startRoom`, and `roomSummary`. Rooms only speak to the casino via A2A and expect a callback pointing to the lobby’s `recordGameEvent` entrypoint.
-
-- Default ports: poker `4500`, slot `4700`, blackjack `4800`
-- Shared env vars:
-  - `PORT` – HTTP port
-  - `ROOM_ID` (or `TABLE_ID` for poker) – default identifier to advertise
-  - `ROOM_AGENT_NAME`, `ROOM_AGENT_VERSION`, `ROOM_AGENT_DESCRIPTION` – metadata for the AgentCard
-- Poker-only logic tracks blinds, stacks, and uses the `hand-evaluator` helper
-- Slot/blackjack agents keep an event log accessible via `GET /ui/state` for debugging
-
-Run `bun install && bun run dev` inside any room folder when you want to run it independently of the lobby launcher.
-
-### Player Agents (`agent-player-1/`, `agent-player-2/`)
-
-Both players are Lucid HTTP agents with a `signup` and `play` entrypoint. The casino invites them with the table limits, then the room agent calls `play` each time the player needs to decide. Signup responses only return the player's display name—the casino handles stacks and targets the `play` action skill configured during registration.
-
-| Player 1 (Gemini) | Description | Default |
-| --- | --- | --- |
-| `PORT` | HTTP port | `3000` → override in quick start |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `AX_GEMINI_API_KEY` | API key(s) used by the AxLLM client | _required for LLM play_ |
-| `PLAYER_MODEL` | Gemini model id | `gemini-1.5-pro` |
-| `PLAYER_DISPLAY_NAME` | Name reported during signup | `Player One` |
-
-| Player 2 (GPT) | Description | Default |
-| --- | --- | --- |
-| `OPENAI_API_KEY` / `AX_OPENAI_API_KEY` | API key for GPT decisions | _required for LLM play_ |
-| `PLAYER_MODEL` | OpenAI model id | `gpt-4.1-mini` |
-| `PLAYER_DISPLAY_NAME` | Name reported during signup | `Player Two` |
-| `PLAYER_AGGRESSION` | Heuristic aggression factor (0–1) | `0.6` |
-
-Both agents fall back to deterministic heuristics when the Ax LLM client is not configured, so you can still run local demos without API keys.
-
-### Dashboard (`casino-dashboard/`)
-
-React + Vite UI that consumes `/ui/rooms` and `/ui/rooms/:roomId`.
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `VITE_CASINO_URL` | Base URL for lobby HTTP requests | `http://localhost:4000` |
-| `VITE_POLL_INTERVAL` | Polling interval in ms | `4000` |
-
-Commands:
-
-```bash
-cd casino-dashboard
-bun install
-bun run dev        # start dev server
-bun run build      # type-check + production build
-```
-
-## Lobby Entrypoints and REST Routes
-
-| Entrypoint / Route | Purpose |
+| Entrypoint | Purpose |
 | --- | --- |
-| `GET /ui/rooms` | Lobby summary plus available game metadata |
-| `POST /ui/rooms` | Create a room. Body accepts `roomId?`, `gameType`, `config`, `roomAgentCardUrl?`, `roomAgentSkills?`, `launchOptions?` |
-| `GET /ui/rooms/:roomId` | Latest snapshot for a room (config, summary, events, card URL) |
-| `POST /ui/rooms/:roomId/register` | Register a player card for that room |
-| `POST /ui/rooms/:roomId/start` | Manually start gameplay with optional overrides |
-| `/entrypoints/createRoom` | Same as `POST /ui/rooms` but via the Lucid entrypoint |
-| `/entrypoints/registerPlayer` | Register a player via A2A |
-| `/entrypoints/startRoom` | Start/continue gameplay |
-| `/entrypoints/listRooms` | Return the current `CasinoState` |
+| `configureRoom` | Apply room config and provide the casino’s callback card so events can be streamed back |
+| `registerPlayer` | Seat a player (poker enforces unique AgentCards and seat numbers) |
+| `startRoom` | Start gameplay; poker runs until a single player remains, slot/blackjack play a fixed number of rounds |
+| `roomSummary` | Returns the latest state + player stacks |
+
+### Poker-Specific Notes
+- Seats up to eight players.
+- Registration closes as soon as the first hand starts; the game runs until one player holds all chips and emits a `room_ended` event.
+- Uses the deterministic `hand-evaluator` to resolve winners.
+
+### Slot & Blackjack
+- Slot rooms accept multiple players and simulate spins according to cost/multiplier settings.
+- Blackjack rooms pit players against the dealer for a configurable number of rounds.
+
+You can run any room outside the lobby launcher (set the respective `*_ROOM_AGENT_AUTOSPAWN=false` and provide the AgentCard URL via env).
+
+---
+
+## Player Agents
+
+Both sample players are Lucid HTTP agents:
+
+| Env | Meaning (Player 1) | Player 2 Equivalent |
+| --- | --- | --- |
+| `PORT` | HTTP port | Same |
+| `PLAYER_DISPLAY_NAME` | Display name shown in UI | Same |
+| `PAYOUT_ADDRESS` / `PAYMENTS_RECEIVABLE_ADDRESS` | Wallet for payouts (required) | Same |
+| `GEMINI_API_KEY` / `PLAYER_MODEL` | Model & credentials | `OPENAI_API_KEY`, `PLAYER_MODEL`, `PLAYER_AGGRESSION` |
+
+Each agent exposes `.well-known/agent-card.json`. Provide that URL to `/ui/rooms/:roomId/register` (or via the dashboard) to seat the player.
+
+---
+
+## Dashboard (`client/`)
+
+- Polls `/ui/rooms` and `/ui/rooms/:roomId`.
+- Shows table summaries, poker seat maps, recent events, and room configuration.
+- Registration form supports manual AgentCard URLs and handles the x402 paywall UI, including wallet connection and one-click payout of the buy‑in.
+- Define `VITE_CASINO_URL` and `VITE_POLL_INTERVAL` if you need custom targets.
+
+Important: The dashboard never stores private keys. It uses the browser wallet (MetaMask, etc.) to sign the x402 payment header on Base/Base‑Sepolia.
+
+---
+
+## REST & Entry Points
+
+| Route / Entrypoint | Description |
+| --- | --- |
+| `GET /ui/rooms` | Lobby summary, available game metadata, default game type |
+| `POST /ui/rooms` | Create a room (`roomId?`, `gameType`, `config`, optional AgentCard) |
+| `GET /ui/rooms/:roomId` | Latest snapshot (config, summary, room AgentCard URL, events) |
+| `POST /ui/rooms/:roomId/register` | Register a player (requires `agentCardUrl`, optional seat/skills). Triggers x402 paywall for poker. |
+| `POST /ui/rooms/:roomId/start` | Start gameplay with optional overrides (non-poker) |
+| `/entrypoints/createRoom` | Lucid counterpart to `POST /ui/rooms` |
+| `/entrypoints/registerPlayer` | Lucid counterpart to the register route |
+| `/entrypoints/startRoom` | Lucid counterpart to start route |
+| `/entrypoints/listRooms` | Returns the lobby state |
 | `/entrypoints/recordGameEvent` | Callback used by room agents to stream activity |
 
-Responses from `listRooms`/`/ui/rooms` include each room’s `roomAgentCardUrl`, `roomBaseUrl` (when auto-spawned), and summarized state so external tools or agents can interact with a specific table directly. When creating rooms programmatically you can provide `launchOptions.port` to force the spawned agent to run on a specific port.
+Use the entrypoints when orchestrating rooms from another Lucid agent; use the REST routes when integrating via HTTP.
 
-## Building New Players or Rooms
+---
 
-- `casino-agent/PROTOCOL.md` and the copies inside each project define the Zod schemas for invitations, actions, room configuration, and events—use them to bootstrap new agents quickly.
-- To create your own player: scaffold a Lucid agent (`bunx @lucid-agents/cli my-player`), implement `signup` and `play`, and hand the casino your AgentCard URL.
-- To add a new game type: create a room agent exposing the shared `configureRoom`/`registerPlayer`/`startRoom`/`roomSummary` skills, then register a `RoomGameDefinition` inside `casino-agent/src/lib/casino-agent.ts`.
+## Customization Tips
 
-## Tips & Troubleshooting
+- **Add new rooms** by building a Lucid agent that exposes the shared entrypoints and registering it in `casino-agent/src/lib/casino-agent.ts` (see `roomGames` map).
+- **Add new players** by cloning `agent-player-1` or `agent-player-2`, changing the decision logic under `play`, and hosting the AgentCard somewhere reachable.
+- **Disable auto-spawn** when deploying room agents separately; point `DEFAULT_*_ROOM_AGENT_CARD_URL` to your hosted AgentCard.
+- **Bring your own dashboard**: everything the React UI uses is under `/ui`. You can build any other consumer (CLI, bot, etc.) using the same endpoints.
 
-- Run `bun run dev` from the lobby while `ROOM_AGENT_AUTOSPAWN=false` to keep currently running room processes alive during code reloads.
-- Use `GET /ui/state` on the lobby or `GET /ui/state` on any room agent for raw JSON snapshots when debugging outside the dashboard.
-- If `CASINO_AGENT_CARD_URL` is misconfigured the lobby throws at startup—make sure it’s reachable by the room agents (even if it points back to the same origin).
-- When experimenting with external players, use the dashboard’s “Register Player” form to point at your new AgentCard without touching the lobby code.
+---
+
+## Troubleshooting
+
+- **Facilitator errors** – ensure `dps-facilitator` is running and the lobby can reach it. Look for console logs mentioning `/dps/quote`, `/verify`, or `/settle`.
+- **Registration stuck on payment** – confirm your wallet is on `PAYMENTS_NETWORK`, and the quote still matches the current room (quotes expire after 60 seconds).
+- **Room fails to start** – poker requires ≥2 registered players; other rooms may need manual `POST /ui/rooms/:roomId/start`.
+- **Payout skipped** – set `PAYOUT_PRIVATE_KEY` and ensure the facilitator trusts the payout wallet. The lobby logs a warning if it cannot send the payout.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).

@@ -14,6 +14,13 @@ import {
 } from "./protocol";
 
 const playerName = process.env.PLAYER_DISPLAY_NAME ?? "Player One";
+const payoutAddress =
+  (process.env.PAYOUT_ADDRESS ?? process.env.PAYMENTS_RECEIVABLE_ADDRESS)?.trim() ?? "";
+if (!/^0x[a-fA-F0-9]{40}$/.test(payoutAddress)) {
+  throw new Error(
+    "Set PAYOUT_ADDRESS or PAYMENTS_RECEIVABLE_ADDRESS to the wallet that should receive payouts."
+  );
+}
 
 const GEMINI_MODEL = process.env.PLAYER_MODEL?.trim() || "gemini-1.5-pro";
 const geminiApiKey =
@@ -75,6 +82,7 @@ addEntrypoint({
     return {
       output: {
         displayName: playerName,
+        payoutAddress,
       },
     };
   },

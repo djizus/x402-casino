@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { createPaymentHeader } from 'x402/client';
 import { exact } from 'x402/schemes';
 import { processPriceToAtomicAmount } from 'x402/shared';
-import type { PaymentPayload, PaymentRequirements } from 'x402/types';
+import type { PaymentPayload, PaymentRequirements, SettleResponse } from 'x402/types';
 import { settleResponseHeader } from 'x402/types';
-import { createWalletClient, http, type Hex } from 'viem';
+import { createWalletClient, getAddress, http, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { base, baseSepolia } from 'viem/chains';
+import { chainFromNetwork } from './networks';
+type WalletSigner = Parameters<typeof createPaymentHeader>[0];
 
 type QuoteRecord = {
   id: string;
@@ -28,27 +29,14 @@ type VerifyResponse = {
   invalidReason?: string;
 };
 
-type SettleResponse = {
-  success: boolean;
-  errorReason?: string;
-  txHash?: string;
-  payer?: string;
-};
-
 type FacilitatorConfig = {
   url: string;
   payTo: string;
-  network: string;
+  network: PaymentRequirements['network'];
   dpsSignerPrivateKey: Hex;
 };
 
 const X402_VERSION = 1;
-
-const chainFromNetwork = (network: string) => {
-  if (network === 'base') return base;
-  if (network === 'base-sepolia' || network === 'base_testnet') return baseSepolia;
-  throw new Error(`Unsupported PAYMENTS_NETWORK: ${network}`);
-};
 
 const normalizeHex = (value: string) => {
   try {
@@ -61,9 +49,9 @@ const normalizeHex = (value: string) => {
 export class RegistrationPaywall {
   private readonly facilitatorUrl: string;
   private readonly payTo: string;
-  private readonly network: string;
+  private readonly network: PaymentRequirements['network'];
   private readonly quotesByRoom = new Map<string, Map<string, QuoteRecord>>();
-  private readonly walletClient;
+  private readonly walletClient: WalletSigner;
 
   constructor(config: FacilitatorConfig) {
     this.facilitatorUrl = config.url.replace(/\/$/, '');
@@ -76,7 +64,7 @@ export class RegistrationPaywall {
       account,
       chain,
       transport: http(),
-    });
+    }) as unknown as WalletSigner;
   }
 
   public async createQuote(roomId: string, priceUsd: number, resourceUrl: string): Promise<PaymentRequirements> {
@@ -85,8 +73,8 @@ export class RegistrationPaywall {
       throw new Error(calculation.error);
     }
     const { maxAmountRequired, asset } = calculation;
-    const assetAddress = normalizeHex(typeof asset === 'string' ? asset : asset.address);
-    const assetExtra = typeof asset === 'string' ? undefined : asset.eip712;
+    const assetAddress = normalizeHex(asset.address);
+    const assetExtra = 'eip712' in asset ? asset.eip712 : undefined;
 
     const baseRequirements: PaymentRequirements = {
       scheme: 'exact',

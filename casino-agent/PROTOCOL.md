@@ -32,10 +32,12 @@ const signupInvitationSchema = z.object({
 ```ts
 const playerSignupResponseSchema = z.object({
   displayName: z.string().min(1),
+  payoutAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
 });
 ```
 
 - `displayName` appears throughout the lobby UI.
+- `payoutAddress` is the on-chain wallet operators will use to distribute buy-in payouts.
 - The casino chooses stacks + action skills when registering the player, so signup responses stay minimal.
 
 ### Action Request
@@ -77,8 +79,8 @@ const roomConfigSchema = z.object({
   bigBlind: z.number().positive(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
-  maxHands: z.number().int().positive(),
   maxPlayers: z.number().int().min(2).max(8),
+  buyInPriceUsd: z.number().min(1).max(10),
 });
 
 const createRoomInputSchema = z.object({
@@ -117,7 +119,6 @@ const startRoomInputSchema = z.object({
   roomId: z.string(),
   overrides: z
     .object({
-      maxHands: z.number().int().positive().optional(),
       smallBlind: z.number().positive().optional(),
       bigBlind: z.number().positive().optional(),
     })

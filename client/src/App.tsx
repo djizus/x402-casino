@@ -139,7 +139,6 @@ export function App() {
         bigBlind: 10,
         minBuyIn: 100,
         maxBuyIn: 100,
-        maxHands: 1000,
         maxPlayers: 8,
         buyInPriceUsd: 1,
       },
@@ -379,6 +378,10 @@ export function App() {
       setRegisterToast({ kind: 'error', text: 'Select a room first.' });
       return;
     }
+    if (roomSnapshot?.summary?.status !== 'waiting') {
+      setRegisterToast({ kind: 'error', text: 'Registration is closed for this room.' });
+      return;
+    }
     setRegisterToast(null);
     try {
       const payload = buildRegisterPayload();
@@ -427,6 +430,10 @@ export function App() {
     : selectedPaymentRequirements && paymentAmountDisplay
       ? `Pay ${paymentAmountDisplay} ${paymentAssetName}`
       : 'Pay now';
+  const roomStatus = roomSnapshot?.summary?.status ?? 'waiting';
+  const registrationOpen = roomStatus === 'waiting';
+  const roomEnded = roomStatus === 'ended';
+  const canStartRoom = roomStatus === 'waiting';
 
   if (loadingLobby) {
     return (
@@ -566,8 +573,15 @@ export function App() {
                     )}
                   </div>
                   <div className="action-buttons">
-                    <button onClick={handleStartRoom}>Start Room</button>
+                    <button onClick={handleStartRoom} disabled={!canStartRoom}>
+                      Start Room
+                    </button>
                   </div>
+                  {roomEnded && (
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#fca5a5' }}>
+                      Game finished. Payouts have been processed.
+                    </p>
+                  )}
                 </div>
 
                 {/* Players List */}
@@ -591,6 +605,11 @@ export function App() {
                           <div style={{ opacity: 0.7 }}>
                             Seat {player.seatNumber} • Stack: {formatAmount(player.stack)}
                           </div>
+                          {player.payoutAddress && (
+                            <div style={{ opacity: 0.6, fontSize: '0.75rem', wordBreak: 'break-all' }}>
+                              Wallet: {player.payoutAddress}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -603,7 +622,8 @@ export function App() {
                 <div className="section-box">
                   <h3>Register Player</h3>
                   <form onSubmit={handleRegister}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <fieldset disabled={!registrationOpen} style={{ border: 'none', padding: 0, margin: 0 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       <div>
                         <label htmlFor="agentCardUrl" style={{ fontSize: '0.8rem' }}>
                           Agent Card URL
@@ -641,10 +661,16 @@ export function App() {
                           />
                         </div>
                       </div>
-                      <button type="submit" style={{ width: '100%' }}>
-                        Register
-                      </button>
-                    </div>
+                        <button type="submit" style={{ width: '100%' }}>
+                          Register
+                        </button>
+                      </div>
+                    </fieldset>
+                    {roomSnapshot.summary?.status !== 'waiting' && (
+                      <p style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: '0.4rem' }}>
+                        Registration is closed for this room.
+                      </p>
+                    )}
                     {registerToast && (
                       <div className="toast" data-kind={registerToast.kind} style={{ marginTop: '0.5rem' }}>
                         <div>{registerToast.text}</div>

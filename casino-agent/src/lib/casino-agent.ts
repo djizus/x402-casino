@@ -26,6 +26,9 @@ import { RoomManager, type CasinoRuntime } from './room-manager';
 import { RoomLauncher } from './room-launcher';
 import type { GameMetadata, RoomGameDefinition } from './room-definitions';
 import { PAYWALL_X402_VERSION, RegistrationPaywall } from './paywall';
+import type { PaymentRequirements } from 'x402/types';
+import { getDefaultAsset } from 'x402/shared';
+import { PayoutProcessor } from './payout-processor';
 
 const toNumber = (value: string | undefined, fallback: number): number => {
   if (!value) {
@@ -91,7 +94,7 @@ if (!casinoCardUrl) {
 const defaultGameType = process.env.DEFAULT_GAME_TYPE ?? 'poker';
 const facilitatorUrl = process.env.DPS_FACILITATOR_URL;
 const payToAddress = process.env.PAYMENTS_RECEIVABLE_ADDRESS;
-const paymentsNetwork = process.env.PAYMENTS_NETWORK ?? 'base-sepolia';
+const paymentsNetwork = (process.env.PAYMENTS_NETWORK ?? 'base-sepolia') as PaymentRequirements['network'];
 const dpsPrivateKey = process.env.DPS_PAYER_PRIVATE_KEY as `0x${string}` | undefined;
 
 if (!facilitatorUrl) {
@@ -110,6 +113,20 @@ const registrationPaywall = new RegistrationPaywall({
   network: paymentsNetwork,
   dpsSignerPrivateKey: dpsPrivateKey,
 });
+const payoutPrivateKey = process.env.PAYOUT_PRIVATE_KEY as `0x${string}` | undefined;
+const defaultAsset = getDefaultAsset(paymentsNetwork);
+const payoutProcessor = payoutPrivateKey
+  ? new PayoutProcessor({
+      url: facilitatorUrl,
+      network: paymentsNetwork,
+      signerPrivateKey: payoutPrivateKey,
+      asset: {
+        address: defaultAsset.address,
+        extra: defaultAsset.eip712 ? { ...defaultAsset.eip712 } : undefined,
+      },
+      resourceBaseUrl: casinoCardUrl,
+    })
+  : undefined;
 
 const pokerConfigSchema = z.object({
   startingStack: z.number().positive(),
@@ -117,7 +134,6 @@ const pokerConfigSchema = z.object({
   bigBlind: z.number().positive(),
   minBuyIn: z.number().positive(),
   maxBuyIn: z.number().positive(),
-  maxHands: z.number().int().positive(),
   maxPlayers: z.number().int().min(2).max(8),
   buyInPriceUsd: z.number().min(1).max(10),
 });
@@ -148,7 +164,6 @@ const pokerDefaultConfig = pokerConfigSchema.parse({
   startingStack: readNumberEnv(['POKER_STARTING_STACK', 'STARTING_STACK'], 1000),
   smallBlind: readNumberEnv(['POKER_SMALL_BLIND', 'SMALL_BLIND'], 5),
   bigBlind: readNumberEnv(['POKER_BIG_BLIND', 'BIG_BLIND'], 10),
-  maxHands: Math.max(1, Math.round(readNumberEnv(['POKER_MAX_HANDS', 'MAX_HANDS'], 1000))),
   minBuyIn: readNumberEnv(['POKER_MIN_BUY_IN', 'MIN_BUY_IN'], 100),
   maxBuyIn: readNumberEnv(['POKER_MAX_BUY_IN', 'MAX_BUY_IN'], 100),
   maxPlayers: clampMaxPlayers(readNumberEnv(['POKER_MAX_PLAYERS', 'MAX_PLAYERS'], 8)),
@@ -185,7 +200,6 @@ const buildPokerConfig = (payload: unknown, defaults: PokerConfig = pokerDefault
     bigBlind: toConfigNumber(data.bigBlind, defaults.bigBlind),
     minBuyIn: toConfigNumber(data.minBuyIn, defaults.minBuyIn),
     maxBuyIn: toConfigNumber(data.maxBuyIn, defaults.maxBuyIn),
-    maxHands: Math.max(1, Math.round(toConfigNumber(data.maxHands, defaults.maxHands))),
     maxPlayers: clampMaxPlayers(toConfigNumber(data.maxPlayers, defaults.maxPlayers)),
     buyInPriceUsd: Math.min(10, Math.max(1, toConfigNumber(data.buyInPriceUsd, defaults.buyInPriceUsd))),
   });
@@ -302,7 +316,6 @@ const pokerDefinition: RoomGameDefinition<PokerConfig> = {
     { key: 'bigBlind', label: 'Big Blind', type: 'number', step: 0.1 },
     { key: 'minBuyIn', label: 'Min Buy-in', type: 'number', step: 0.1 },
     { key: 'maxBuyIn', label: 'Max Buy-in', type: 'number', step: 0.1 },
-    { key: 'maxHands', label: 'Max Hands', type: 'number', step: 1, min: 1 },
     { key: 'maxPlayers', label: 'Max Players', type: 'number', step: 1, min: 2, max: 8 },
     { key: 'buyInPriceUsd', label: 'Buy-in Price (USD)', type: 'number', step: 0.1, min: 1, max: 10 },
   ],
@@ -470,6 +483,8 @@ const roomManager = new RoomManager(
   {
     games: roomGames,
     defaultGameType,
+    paymentsNetwork,
+    payoutProcessor,
   },
 );
 
