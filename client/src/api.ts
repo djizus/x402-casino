@@ -2,14 +2,45 @@ import type { CreateRoomPayload, LobbyState, RegisterPayload, RoomSnapshot } fro
 
 const BASE_URL = import.meta.env.VITE_CASINO_URL ?? 'http://localhost:4000';
 
+export class ApiError extends Error {
+  status: number;
+  body?: unknown;
+  rawBody?: string;
+
+  constructor(message: string, init: { status: number; body?: unknown; rawBody?: string }) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = init.status;
+    this.body = init.body;
+    this.rawBody = init.rawBody;
+  }
+}
+
+const tryParseJson = (text: string) => {
+  try {
+    return text ? JSON.parse(text) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const toJson = async (response: Response) => {
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || 'Request failed');
+    const rawBody = await response.text();
+    const parsedBody = tryParseJson(rawBody);
+    const message =
+      (parsedBody && typeof parsedBody === 'object' && 'error' in parsedBody && typeof parsedBody.error === 'string'
+        ? parsedBody.error
+        : rawBody) || 'Request failed';
+    throw new ApiError(message, {
+      status: response.status,
+      body: parsedBody,
+      rawBody,
+    });
   }
   const body = await response.json();
   if (body && 'ok' in body && body.ok === false) {
-    throw new Error(body.error ?? 'Request failed');
+    throw new ApiError(body.error ?? 'Request failed', { status: response.status, body });
   }
   return body;
 };
@@ -44,10 +75,19 @@ export const createRoom = async (input: CreateRoomPayload) => {
   return data.room;
 };
 
-export const registerPlayer = async (roomId: string, input: RegisterPayload) => {
+type RegisterOptions = {
+  paymentHeader?: string;
+};
+
+export const registerPlayer = async (roomId: string, input: RegisterPayload, options?: RegisterOptions) => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (options?.paymentHeader) {
+    headers['X-PAYMENT'] = options.paymentHeader;
+    headers['Access-Control-Expose-Headers'] = 'X-PAYMENT-RESPONSE';
+  }
   const res = await fetch(`${BASE_URL}/ui/rooms/${encodeURIComponent(roomId)}/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(input),
   });
   return toJson(res);

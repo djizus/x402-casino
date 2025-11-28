@@ -1,10 +1,116 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
-import { createRoom, fetchLobbyState, fetchRoomSnapshot, registerPlayer } from './api';
-import type { LobbyGame, LobbyState, RoomSnapshot, RoomEvent } from './types';
+import { ApiError, createRoom, fetchLobbyState, fetchRoomSnapshot, registerPlayer } from './api';
+import { createPaymentHeader } from 'x402/client';
+import type { PaymentRequirements } from 'x402/types';
+import { createWalletClient, custom, type Account, type Transport, type WalletClient } from 'viem';
+import { baseSepolia } from 'viem/chains';
+import type { LobbyGame, LobbyState, RoomSnapshot, RoomEvent, RegisterPayload } from './types';
 import { PokerTable } from './PokerTable';
 
 const POLL_INTERVAL = Number(import.meta.env.VITE_POLL_INTERVAL ?? 4000);
+const BASE_SEPOLIA_CHAIN_ID_HEX = `0x${baseSepolia.id.toString(16)}`;
+
+type RegisterFormState = {
+  agentCardUrl: string;
+  signupSkill: string;
+  actionSkill: string;
+  preferredSeat: string;
+};
+
+const DEFAULT_REGISTER_FORM: RegisterFormState = {
+  agentCardUrl: '',
+  signupSkill: 'signup',
+  actionSkill: 'play',
+  preferredSeat: '',
+};
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+};
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
+}
+
+type DpsPaymentResponse = {
+  x402Version: number;
+  error?: string;
+  accepts: PaymentRequirements[];
+};
+
+type RegisterToast = {
+  kind: 'success' | 'error';
+  text: string;
+  dpsPayment?: DpsPaymentResponse;
+};
+
+type BaseWalletClient = WalletClient<Transport, typeof baseSepolia, Account>;
+
+type WalletState = {
+  status: 'idle' | 'connecting' | 'connected';
+  address?: string;
+  client?: BaseWalletClient;
+  error?: string | null;
+};
+
+const formatAtomicAmount = (value: string | undefined, decimals = 6) => {
+  if (!value) return '';
+  const scale = 10 ** decimals;
+  const amount = Number(value) / scale;
+  if (!Number.isFinite(amount)) return value;
+  return amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: Math.min(decimals, 6),
+  });
+};
+
+const shortenAddress = (address: string) => `${address.slice(0, 6)}...${address.slice(-4)}`;
+
+const ensureBaseSepoliaNetwork = async (provider: EthereumProvider) => {
+  try {
+    await provider.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: BASE_SEPOLIA_CHAIN_ID_HEX }],
+    });
+  } catch (error: any) {
+    if (error?.code === 4902) {
+      await provider.request({
+        method: 'wallet_addEthereumChain',
+        params: [
+          {
+            chainId: BASE_SEPOLIA_CHAIN_ID_HEX,
+            chainName: baseSepolia.name,
+            rpcUrls: baseSepolia.rpcUrls.default.http,
+            nativeCurrency: baseSepolia.nativeCurrency,
+            blockExplorerUrls: baseSepolia.blockExplorers ? [baseSepolia.blockExplorers.default.url] : undefined,
+          },
+        ],
+      });
+    } else {
+      throw error;
+    }
+  }
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isStringRecord = (value: unknown): value is Record<string, string> =>
+  isPlainRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
+
+const isDpsAccept = (value: unknown): value is PaymentRequirements => {
+  if (!isPlainRecord(value) || typeof value.scheme !== 'string') return false;
+  if ('extra' in value && value.extra !== undefined && !isStringRecord(value.extra)) return false;
+  return true;
+};
+
+const isDpsPaymentResponse = (value: unknown): value is DpsPaymentResponse =>
+  isPlainRecord(value) && typeof value.x402Version === 'number' && Array.isArray(value.accepts) && value.accepts.every(isDpsAccept);
 
 export function App() {
   const [lobby, setLobby] = useState<LobbyState | null>(null);
@@ -18,13 +124,10 @@ export function App() {
   const [createForm, setCreateForm] = useState({ roomId: '' });
   const [createToast, setCreateToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(false);
-  const [registerForm, setRegisterForm] = useState({
-    agentCardUrl: '',
-    signupSkill: 'signup',
-    actionSkill: 'play',
-    preferredSeat: '',
-  });
-  const [registerToast, setRegisterToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [registerForm, setRegisterForm] = useState<RegisterFormState>(() => ({ ...DEFAULT_REGISTER_FORM }));
+  const [registerToast, setRegisterToast] = useState<RegisterToast | null>(null);
+  const [walletState, setWalletState] = useState<WalletState>({ status: 'idle', error: null });
+  const [isPaying, setIsPaying] = useState(false);
 
   const buildConfigDefaults = useCallback((game: LobbyGame | undefined) => {
     if (!game) return {};
@@ -143,6 +246,133 @@ export function App() {
     return [...recent].reverse();
   }, [events]);
 
+  const buildRegisterPayload = useCallback((): RegisterPayload => {
+    const payload: RegisterPayload = {
+      agentCardUrl: registerForm.agentCardUrl.trim(),
+    };
+    if (registerForm.signupSkill.trim()) payload.signupSkill = registerForm.signupSkill.trim();
+    if (registerForm.actionSkill.trim()) payload.actionSkill = registerForm.actionSkill.trim();
+    if (registerForm.preferredSeat.trim()) payload.preferredSeat = Number(registerForm.preferredSeat);
+    return payload;
+  }, [registerForm]);
+
+  const resetRegisterForm = useCallback(() => {
+    setRegisterForm({ ...DEFAULT_REGISTER_FORM });
+  }, []);
+
+  const handleRegisterSuccess = useCallback(
+    (roomId: string, message = 'Player registered.') => {
+      setRegisterToast({ kind: 'success', text: message });
+      resetRegisterForm();
+      refreshRoom(roomId);
+    },
+    [refreshRoom, resetRegisterForm],
+  );
+
+  const handleRegisterFailure = useCallback((error: unknown) => {
+    if (error instanceof ApiError && isDpsPaymentResponse(error.body)) {
+      setRegisterToast({
+        kind: 'error',
+        text: error.message || 'Payment required',
+        dpsPayment: error.body,
+      });
+    } else {
+      setRegisterToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to register.' });
+    }
+  }, []);
+
+  const selectedPaymentRequirements = useMemo<PaymentRequirements | null>(() => {
+    const accepts = registerToast?.dpsPayment?.accepts;
+    if (!accepts || accepts.length === 0) return null;
+    const baseSepoliaOption = accepts.find((option) => option.scheme === 'exact' && option.network === 'base-sepolia');
+    return baseSepoliaOption ?? accepts.find((option) => option.scheme === 'exact') ?? accepts[0];
+  }, [registerToast]);
+
+  const connectWallet = useCallback(async () => {
+    const provider = typeof window !== 'undefined' ? window.ethereum : undefined;
+    if (!provider) {
+      setWalletState({
+        status: 'idle',
+        error: 'Install a browser wallet (e.g. MetaMask) to continue.',
+      });
+      return;
+    }
+    setWalletState((prev) => ({ ...prev, status: 'connecting', error: null }));
+    try {
+      await ensureBaseSepoliaNetwork(provider);
+      const transport = custom(provider);
+      const tempClient = createWalletClient({
+        chain: baseSepolia,
+        transport,
+      });
+      const addresses = await tempClient.requestAddresses();
+      const address = addresses[0];
+      if (!address) {
+        throw new Error('Your wallet did not return any accounts.');
+      }
+      const client = createWalletClient({
+        account: address,
+        chain: baseSepolia,
+        transport,
+      }) as BaseWalletClient;
+      setWalletState({
+        status: 'connected',
+        address,
+        client,
+        error: null,
+      });
+    } catch (error) {
+      setWalletState({
+        status: 'idle',
+        address: undefined,
+        client: undefined,
+        error: error instanceof Error ? error.message : 'Failed to connect wallet.',
+      });
+    }
+  }, []);
+
+  const disconnectWallet = useCallback(() => {
+    setWalletState({ status: 'idle', address: undefined, client: undefined, error: null });
+  }, []);
+
+  const handlePayInvoice = useCallback(async () => {
+    if (!selectedRoomId || !registerToast?.dpsPayment || !selectedPaymentRequirements) return;
+    if (selectedPaymentRequirements.network !== 'base-sepolia') {
+      setWalletState((prev) => ({
+        ...prev,
+        error: `Unsupported payment network "${selectedPaymentRequirements.network}".`,
+      }));
+      return;
+    }
+    if (!walletState.client) {
+      setWalletState((prev) => ({ ...prev, error: 'Connect a wallet before paying.' }));
+      return;
+    }
+    setIsPaying(true);
+    try {
+      const payload = buildRegisterPayload();
+      const paymentHeader = await createPaymentHeader(
+        walletState.client as unknown as Parameters<typeof createPaymentHeader>[0],
+        registerToast.dpsPayment.x402Version,
+        selectedPaymentRequirements,
+      );
+      await registerPlayer(selectedRoomId, payload, { paymentHeader });
+      handleRegisterSuccess(selectedRoomId, 'Player registered after payment.');
+    } catch (error) {
+      handleRegisterFailure(error);
+    } finally {
+      setIsPaying(false);
+    }
+  }, [
+    buildRegisterPayload,
+    handleRegisterFailure,
+    handleRegisterSuccess,
+    registerToast,
+    selectedPaymentRequirements,
+    selectedRoomId,
+    walletState.client,
+  ]);
+
   const handleRegister = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedRoomId) {
@@ -151,23 +381,11 @@ export function App() {
     }
     setRegisterToast(null);
     try {
-      const payload: any = {
-        agentCardUrl: registerForm.agentCardUrl.trim(),
-      };
-      if (registerForm.signupSkill.trim()) payload.signupSkill = registerForm.signupSkill.trim();
-      if (registerForm.actionSkill.trim()) payload.actionSkill = registerForm.actionSkill.trim();
-      if (registerForm.preferredSeat.trim()) payload.preferredSeat = Number(registerForm.preferredSeat);
+      const payload = buildRegisterPayload();
       await registerPlayer(selectedRoomId, payload);
-      setRegisterToast({ kind: 'success', text: 'Player registered.' });
-      setRegisterForm({
-        agentCardUrl: '',
-        signupSkill: 'signup',
-        actionSkill: 'play',
-        preferredSeat: '',
-      });
-      refreshRoom(selectedRoomId);
+      handleRegisterSuccess(selectedRoomId);
     } catch (error) {
-      setRegisterToast({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to register.' });
+      handleRegisterFailure(error);
     }
   };
 
@@ -193,6 +411,22 @@ export function App() {
       maximumFractionDigits: 4,
     });
   };
+
+  const paymentAssetName = selectedPaymentRequirements?.extra?.name ?? 'USDC';
+  const paymentAmountDisplay = selectedPaymentRequirements?.maxAmountRequired
+    ? formatAtomicAmount(selectedPaymentRequirements.maxAmountRequired)
+    : null;
+  const walletConnected = walletState.status === 'connected';
+  const supportedPaymentNetwork =
+    !selectedPaymentRequirements || selectedPaymentRequirements.network === 'base-sepolia';
+  const walletReady = walletConnected && supportedPaymentNetwork;
+  const payButtonDisabled =
+    !selectedRoomId || !selectedPaymentRequirements || !walletReady || isPaying;
+  const payButtonText = isPaying
+    ? 'Paying…'
+    : selectedPaymentRequirements && paymentAmountDisplay
+      ? `Pay ${paymentAmountDisplay} ${paymentAssetName}`
+      : 'Pay now';
 
   if (loadingLobby) {
     return (
@@ -413,7 +647,123 @@ export function App() {
                     </div>
                     {registerToast && (
                       <div className="toast" data-kind={registerToast.kind} style={{ marginTop: '0.5rem' }}>
-                        {registerToast.text}
+                        <div>{registerToast.text}</div>
+                        {registerToast.dpsPayment && (
+                          <div className="dps-payment-details">
+                            <div className="dps-payment-header">
+                              <span>{registerToast.dpsPayment.error ?? 'Payment required'}</span>
+                              <span className="dps-payment-version">x402 v{registerToast.dpsPayment.x402Version}</span>
+                            </div>
+                            <p className="dps-payment-instructions">
+                              Complete the payment with one of the options below to finish registration.
+                            </p>
+                            {registerToast.dpsPayment.accepts.length > 0 ? (
+                              <div className="dps-payment-options">
+                                {registerToast.dpsPayment.accepts.map((accept, idx) => {
+                                  const assetLabel = accept.extra?.name
+                                    ? accept.asset
+                                      ? `${accept.extra.name} • ${accept.asset}`
+                                      : accept.extra.name
+                                    : accept.asset;
+                                  const detailRows = [
+                                    { label: 'Description', value: accept.description },
+                                    { label: 'Resource', value: accept.resource },
+                                    { label: 'Pay to', value: accept.payTo },
+                                    { label: 'Asset', value: assetLabel },
+                                    { label: 'Max amount', value: accept.maxAmountRequired },
+                                    {
+                                      label: 'Timeout',
+                                      value:
+                                        typeof accept.maxTimeoutSeconds === 'number'
+                                          ? `${accept.maxTimeoutSeconds}s`
+                                          : undefined,
+                                    },
+                                    { label: 'MIME type', value: accept.mimeType },
+                                  ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+                                  const extraEntries = accept.extra ? Object.entries(accept.extra) : [];
+                                  return (
+                                    <div key={`${accept.scheme}-${accept.resource ?? idx}`} className="dps-payment-option">
+                                      <div className="dps-payment-option-title">
+                                        Option {idx + 1}: {accept.scheme}
+                                        {accept.network ? ` • ${accept.network}` : ''}
+                                      </div>
+                                      {detailRows.length > 0 && (
+                                        <dl>
+                                          {detailRows.map((row) => (
+                                            <Fragment key={row.label}>
+                                              <dt>{row.label}</dt>
+                                              <dd>{row.value}</dd>
+                                            </Fragment>
+                                          ))}
+                                        </dl>
+                                      )}
+                                      {extraEntries.length > 0 && (
+                                        <div className="dps-payment-extra">
+                                          <div className="dps-payment-option-subtitle">Extra metadata</div>
+                                          <dl>
+                                            {extraEntries.map(([key, value]) => (
+                                              <Fragment key={key}>
+                                                <dt>{key}</dt>
+                                                <dd>{value}</dd>
+                                              </Fragment>
+                                            ))}
+                                          </dl>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="dps-payment-empty">Payment instructions were not included in the response.</p>
+                            )}
+                            {registerToast.dpsPayment && (
+                              <div className="dps-wallet-section">
+                                <div className="dps-wallet-row">
+                                  <div>
+                                    <div className="dps-wallet-label">EVM Wallet</div>
+                                    <div className="dps-wallet-address">
+                                      {walletState.address ? shortenAddress(walletState.address) : 'Not connected'}
+                                    </div>
+                                  </div>
+                                  <div className="dps-wallet-actions">
+                                    {walletConnected ? (
+                                      <button type="button" onClick={disconnectWallet}>
+                                        Disconnect
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={connectWallet}
+                                        disabled={walletState.status === 'connecting'}
+                                      >
+                                        {walletState.status === 'connecting' ? 'Connecting…' : 'Connect wallet'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                                {!supportedPaymentNetwork && (
+                                  <p className="dps-wallet-warning">
+                                    This quote targets {selectedPaymentRequirements?.network}. Wallet payments currently support Base
+                                    Sepolia.
+                                  </p>
+                                )}
+                                {walletState.error && <p className="dps-wallet-error">{walletState.error}</p>}
+                                <button
+                                  type="button"
+                                  className="dps-pay-button"
+                                  onClick={handlePayInvoice}
+                                  disabled={payButtonDisabled}
+                                >
+                                  {payButtonText}
+                                </button>
+                                <p className="dps-wallet-hint">
+                                  Connect a wallet on Base Sepolia with enough {paymentAssetName} to complete the buy-in.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </form>
