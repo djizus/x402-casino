@@ -7,9 +7,9 @@ This repository is a miniature ecosystem of Lucid agents that run a casino lobby
 | Path | Role | Highlights |
 | --- | --- | --- |
 | `casino-agent/` | **Lobby + REST API** | Orchestrates rooms, relays registrations, records events, handles x402 buy‑ins and payouts |
-| `poker-room-agent/` | Poker room agent | No-limit Hold’em engine, pauses only when a single player remains |
-| `slot-machine-room-agent/` | Slot room agent | Multiplayer slot simulator with configurable reels/bets |
-| `blackjack-room-agent/` | Blackjack room agent | Dealer vs. players with adjustable stacks, bets, decks |
+| `casino-agent/room-agents/poker-room-agent/` | Poker room agent | No-limit Hold’em engine, pauses only when a single player remains |
+| `casino-agent/room-agents/slot-machine-room-agent/` | Slot room agent | Multiplayer slot simulator with configurable reels/bets |
+| `casino-agent/room-agents/blackjack-room-agent/` | Blackjack room agent | Dealer vs. players with adjustable stacks, bets, decks |
 | `agent-player-1/` | Sample player | Gemini-backed agent with deterministic fallback strategy |
 | `agent-player-2/` | Sample player | GPT-backed agent with configurable aggression |
 | `client/` | Dashboard | Vite/React UI for room management and live event feeds |

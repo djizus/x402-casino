@@ -232,7 +232,7 @@ const buildBlackjackConfig = (
 const pokerEmbeddedWorkdir =
   process.env.ROOM_AGENT_WORKDIR ??
   process.env.TABLE_AGENT_WORKDIR ??
-  resolve(new URL('../../../poker-room-agent', import.meta.url).pathname);
+  resolve(new URL('../../room-agents/poker-room-agent', import.meta.url).pathname);
 const enablePokerLauncher = (process.env.ROOM_AGENT_AUTOSPAWN ?? process.env.TABLE_AGENT_AUTOSPAWN) !== 'false';
 const pokerAgentBin = process.env.ROOM_AGENT_BIN ?? process.env.TABLE_AGENT_BIN ?? 'bun';
 const pokerAgentArgs = parseArgs(process.env.ROOM_AGENT_ARGS ?? process.env.TABLE_AGENT_ARGS, ['run', 'src/index.ts']);
@@ -257,7 +257,7 @@ const pokerLauncher = enablePokerLauncher
 
 const slotWorkdir =
   process.env.SLOT_ROOM_AGENT_WORKDIR ??
-  resolve(new URL('../../../slot-machine-room-agent', import.meta.url).pathname);
+  resolve(new URL('../../room-agents/slot-machine-room-agent', import.meta.url).pathname);
 const enableSlotLauncher = (process.env.SLOT_ROOM_AGENT_AUTOSPAWN ?? 'true') !== 'false';
 const slotAgentBin = process.env.SLOT_ROOM_AGENT_BIN ?? 'bun';
 const slotAgentArgs = parseArgs(process.env.SLOT_ROOM_AGENT_ARGS, ['run', 'src/index.ts']);
@@ -278,7 +278,7 @@ const defaultPokerCardUrl = process.env.DEFAULT_ROOM_AGENT_CARD_URL;
 const defaultSlotCardUrl = process.env.DEFAULT_SLOT_ROOM_AGENT_CARD_URL ?? process.env.SLOT_ROOM_AGENT_CARD_URL;
 const blackjackWorkdir =
   process.env.BLACKJACK_ROOM_AGENT_WORKDIR ??
-  resolve(new URL('../../../blackjack-room-agent', import.meta.url).pathname);
+  resolve(new URL('../../room-agents/blackjack-room-agent', import.meta.url).pathname);
 const enableBlackjackLauncher = (process.env.BLACKJACK_ROOM_AGENT_AUTOSPAWN ?? 'true') !== 'false';
 const blackjackAgentBin = process.env.BLACKJACK_ROOM_AGENT_BIN ?? 'bun';
 const blackjackAgentArgs = parseArgs(process.env.BLACKJACK_ROOM_AGENT_ARGS, ['run', 'src/index.ts']);

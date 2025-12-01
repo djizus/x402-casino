@@ -5,9 +5,9 @@ import { existsSync } from 'node:fs';
 const rootDir = resolve(new URL('..', import.meta.url).pathname);
 const projectRoots = [
   'casino-agent',
-  'poker-room-agent',
-  'slot-machine-room-agent',
-  'blackjack-room-agent',
+  'casino-agent/room-agents/poker-room-agent',
+  'casino-agent/room-agents/slot-machine-room-agent',
+  'casino-agent/room-agents/blackjack-room-agent',
   'agent-player-1',
   'agent-player-2',
   'client',
