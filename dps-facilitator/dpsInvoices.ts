@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { SupportedEVMNetworks, SupportedSVMNetworks } from "x402/types";
-import type { PaymentRequirements } from "x402/types";
 
 const ATOMIC_VALUE_REGEX = /^\d+$/;
 const DEFAULT_TTL_SECONDS = 3600;
@@ -13,16 +12,29 @@ export class DpsInvoiceError extends Error {
   }
 }
 
-export type InvoiceRecord = {
+export interface PaymentRequirements {
+  scheme: string;
+  network: string;
+  maxAmountRequired: string;
+  resource: string;
+  description: string;
+  mimeType: string;
+  payTo?: string;
+  maxTimeoutSeconds: number;
+  asset?: string;
+  extra?: Record<string, unknown>;
+}
+
+export interface InvoiceRecord {
   id: string;
   paymentRequirements: PaymentRequirements;
   amount: string;
   createdAt: Date;
   expiresAt: Date;
   status: "pending" | "paid";
-};
+}
 
-export type DpsInvoiceStoreConfig = {
+export interface DpsInvoiceStoreConfig {
   resourceUrl: string;
   description: string;
   mimeType: string;
@@ -32,13 +44,13 @@ export type DpsInvoiceStoreConfig = {
   invoiceTtlSeconds?: number;
   evmPayTo?: string;
   svmPayTo?: string;
-};
+}
 
-export type CreateInvoiceParams = {
+export interface CreateInvoiceParams {
   baseRequirements: PaymentRequirements;
   negotiatedAmount: string;
   ttlSeconds?: number;
-};
+}
 
 export class DpsInvoiceStore {
   private readonly invoices = new Map<string, InvoiceRecord>();

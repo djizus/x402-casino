@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PaymentRequirements } from "x402/types";
-import { DpsInvoiceStore, InvoiceRecord } from "./dpsInvoices.ts";
+import { DpsInvoiceStore, InvoiceRecord, PaymentRequirements } from "./dpsInvoices.ts";
 
 const ATOMIC_VALUE_REGEX = /^\d+$/;
 const DEFAULT_TTL_SECONDS = 300;
