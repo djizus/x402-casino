@@ -70,7 +70,24 @@ const agent = await createAgent({
   .use(a2a())
   .build();
 
-const { app, addEntrypoint } = await createAgentApp(agent);
+const { app, addEntrypoint, runtime } = await createAgentApp(agent);
+
+const normalizeBaseUrl = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    return parsed.origin;
+  } catch {
+    console.warn(`[player-1] Ignoring invalid API_BASE_URL: ${value}`);
+    return undefined;
+  }
+};
+
+const manifestBaseUrl = normalizeBaseUrl(process.env.API_BASE_URL);
+if (manifestBaseUrl) {
+  const originalBuild = runtime.manifest.build.bind(runtime.manifest);
+  runtime.manifest.build = () => originalBuild(manifestBaseUrl);
+}
 
 addEntrypoint({
   key: "signup",
