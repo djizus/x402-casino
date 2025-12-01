@@ -446,7 +446,23 @@ const runtime = await createAgent({
   .use(a2a())
   .build();
 
-const { app, addEntrypoint } = await createAgentApp(runtime);
+const { app, addEntrypoint, runtime: appRuntime } = await createAgentApp(runtime);
+
+const normalizeOrigin = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  try {
+    return new URL(value).origin;
+  } catch {
+    console.warn(`[casino-agent] Ignoring invalid URL for manifest origin: ${value}`);
+    return undefined;
+  }
+};
+
+const manifestOrigin = normalizeOrigin(process.env.CASINO_PUBLIC_URL ?? casinoCardUrl);
+if (manifestOrigin) {
+  const originalBuild = appRuntime.manifest.build.bind(appRuntime.manifest);
+  appRuntime.manifest.build = () => originalBuild(manifestOrigin);
+}
 app.use('*', cors());
 
 const roomManager = new RoomManager(

@@ -86,6 +86,7 @@ player agents must also return a `payoutAddress` from their `signup` entrypoint.
    ```bash
    cd casino-agent
    CASINO_AGENT_CARD_URL=http://localhost:4000/.well-known/agent-card.json \
+   CASINO_PUBLIC_URL=https://your-public-domain \
    DPS_FACILITATOR_URL=http://localhost:3002 \
    PAYMENTS_NETWORK=base-sepolia \
    PAYMENTS_RECEIVABLE_ADDRESS=0xYourCasinoWallet \
