@@ -1,25 +1,27 @@
 /* eslint-env node */
 import { config } from "dotenv";
-import express, { Request, Response } from "express";
-import { verify, settle } from "x402/facilitator";
+import express from "express";
+import type { Request, Response } from "express";
+import { settle, verify } from "x402/facilitator";
 import {
-  PaymentRequirementsSchema,
-  type PaymentRequirements,
-  type PaymentPayload,
   PaymentPayloadSchema,
-  createConnectedClient,
-  createSigner,
+  PaymentRequirementsSchema,
   SupportedEVMNetworks,
   SupportedSVMNetworks,
-  Signer,
-  ConnectedClient,
-  SupportedPaymentKind,
+  createConnectedClient,
+  createSigner,
   isSvmSignerWallet,
-  type X402Config,
 } from "x402/types";
-import { DynamicQuoteStore, QuoteError } from "./dynamicQuotes.ts";
+import type {
+  ConnectedClient,
+  PaymentPayload,
+  PaymentRequirements,
+  Signer,
+  SupportedPaymentKind,
+  X402Config,
+} from "x402/types";
 import { DpsInvoiceError, DpsInvoiceStore } from "./dpsInvoices.ts";
-import { traceLog } from "./traceLogger.mts";
+import { DynamicQuoteStore, QuoteError } from "./dynamicQuotes.ts";
 
 config();
 
@@ -73,12 +75,19 @@ const x402Config: X402Config | undefined = SVM_RPC_URL
 const logError = (context: string, error: unknown) => {
   if (error instanceof Error) {
     console.error(`${context}: ${error.message}`);
-    traceLog(context, error);
-  } else {
-    console.error(`${context}:`, error);
-    traceLog(context, error);
+    console.error(error);
+    return;
   }
+
+  console.error(`${context}:`, error);
 };
+
+const logInfo = (...parts: unknown[]) => {
+  console.log("[dps-facilitator]", ...parts);
+};
+
+const describePaymentIdentifier = (requirements: PaymentRequirements) =>
+  requirements.extra?.dynamicQuoteId ?? requirements.extra?.dpsInvoiceId ?? "no-extra";
 
 const app = express();
 
@@ -130,11 +139,7 @@ app.post("/verify", async (req: Request, res: Response) => {
     const parsedRequirements = PaymentRequirementsSchema.parse(body.paymentRequirements);
     const paymentRequirements = normalizePaymentRequirements(parsedRequirements);
     const paymentPayload = PaymentPayloadSchema.parse(body.paymentPayload);
-    traceLog(
-      "facilitator /verify",
-      paymentRequirements.extra?.dynamicQuoteId ?? paymentRequirements.extra?.dpsInvoiceId ?? "no-extra",
-      paymentRequirements.payTo,
-    );
+    logInfo("/verify", describePaymentIdentifier(paymentRequirements), paymentRequirements.payTo);
 
     // use the correct client/signer based on the requested network
     // svm verify requires a Signer because it signs & simulates the txn
@@ -149,9 +154,9 @@ app.post("/verify", async (req: Request, res: Response) => {
 
     // verify
     const valid = await verify(client, paymentPayload, paymentRequirements, x402Config);
-    traceLog(
-      "facilitator /verify result",
-      paymentRequirements.extra?.dynamicQuoteId ?? paymentRequirements.extra?.dpsInvoiceId ?? "no-extra",
+    logInfo(
+      "/verify result",
+      describePaymentIdentifier(paymentRequirements),
       valid.isValid ? "valid" : valid.invalidReason ?? "invalid",
     );
     res.json(valid);
@@ -213,11 +218,7 @@ app.post("/settle", async (req: Request, res: Response) => {
     const parsedRequirements = PaymentRequirementsSchema.parse(body.paymentRequirements);
     const paymentRequirements = normalizePaymentRequirements(parsedRequirements);
     const paymentPayload = PaymentPayloadSchema.parse(body.paymentPayload);
-    traceLog(
-      "facilitator /settle",
-      paymentRequirements.extra?.dynamicQuoteId ?? paymentRequirements.extra?.dpsInvoiceId ?? "no-extra",
-      paymentRequirements.payTo,
-    );
+    logInfo("/settle", describePaymentIdentifier(paymentRequirements), paymentRequirements.payTo);
 
     // use the correct private key based on the requested network
     let signer: Signer;
@@ -231,9 +232,9 @@ app.post("/settle", async (req: Request, res: Response) => {
 
     // settle
     const response = await settle(signer, paymentPayload, paymentRequirements, x402Config);
-    traceLog(
-      "facilitator /settle result",
-      paymentRequirements.extra?.dynamicQuoteId ?? paymentRequirements.extra?.dpsInvoiceId ?? "no-extra",
+    logInfo(
+      "/settle result",
+      describePaymentIdentifier(paymentRequirements),
       response.success ? "success" : response.errorReason ?? "failed",
     );
 
@@ -278,8 +279,8 @@ app.post("/dps/quote", async (req: Request, res: Response) => {
       negotiatedAmount,
       ttlSeconds,
     });
-    traceLog(
-      "facilitator /dps/quote",
+    logInfo(
+      "/dps/quote",
       quote.id,
       `amount=${quote.negotiatedAmount}`,
       `expires=${quote.expiresAt.toISOString()}`,
@@ -306,5 +307,5 @@ app.post("/dps/quote", async (req: Request, res: Response) => {
 
 app.listen(process.env.PORT || 3000, () => {
   console.log(`Server listening at http://localhost:${process.env.PORT || 3000}`);
-  traceLog("facilitator ready", `port=${process.env.PORT || 3000}`);
+  logInfo("ready", `port=${process.env.PORT || 3000}`);
 });
