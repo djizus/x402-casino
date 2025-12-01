@@ -17,8 +17,8 @@ import {
   isSvmSignerWallet,
   type X402Config,
 } from "x402/types";
-import { DynamicQuoteStore, QuoteError } from "./dynamicQuotes";
-import { DpsInvoiceError, DpsInvoiceStore } from "./dpsInvoices";
+import { DynamicQuoteStore, QuoteError } from "./dynamicQuotes.ts";
+import { DpsInvoiceError, DpsInvoiceStore } from "./dpsInvoices.ts";
 import { traceLog } from "./traceLogger.mts";
 
 config();

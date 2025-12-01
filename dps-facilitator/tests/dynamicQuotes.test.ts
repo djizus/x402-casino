@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DynamicQuoteStore, QuoteError } from "../dynamicQuotes";
-import { DpsInvoiceStore } from "../dpsInvoices";
+import { DynamicQuoteStore, QuoteError } from "../dynamicQuotes.ts";
+import { DpsInvoiceStore } from "../dpsInvoices.ts";
 import { PaymentRequirements } from "x402/types";
 
 const baseRequirements: PaymentRequirements = {

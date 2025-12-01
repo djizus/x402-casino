@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DpsInvoiceError, DpsInvoiceStore } from "../dpsInvoices";
+import { DpsInvoiceError, DpsInvoiceStore } from "../dpsInvoices.ts";
 import { PaymentRequirements } from "x402/types";
 
 const baseRequirements: PaymentRequirements = {
