@@ -45,11 +45,13 @@ export type CreateInvoiceParams = {
 
 export class DpsInvoiceStore {
   private readonly invoices = new Map<string, InvoiceRecord>();
+  private readonly config: DpsInvoiceStoreConfig;
+  private readonly now: () => number;
 
-  constructor(
-    private readonly config: DpsInvoiceStoreConfig,
-    private readonly now: () => number = () => Date.now(),
-  ) {}
+  constructor(config: DpsInvoiceStoreConfig, now: () => number = () => Date.now()) {
+    this.config = config;
+    this.now = now;
+  }
 
   createInvoice(params: CreateInvoiceParams): InvoiceRecord {
     const negotiatedAmount = this.validateAmount(params.negotiatedAmount);

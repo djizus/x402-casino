@@ -35,11 +35,13 @@ export type QuoteCreationResult = {
 
 export class DynamicQuoteStore {
   private readonly quotes = new Map<string, QuoteRecord>();
+  private readonly invoiceStore: DpsInvoiceStore;
+  private readonly now: () => number;
 
-  constructor(
-    private readonly invoiceStore: DpsInvoiceStore,
-    private readonly now: () => number = () => Date.now(),
-  ) {}
+  constructor(invoiceStore: DpsInvoiceStore, now: () => number = () => Date.now()) {
+    this.invoiceStore = invoiceStore;
+    this.now = now;
+  }
 
   createQuote(params: CreateQuoteParams): QuoteCreationResult {
     const negotiatedAmount = this.validateAmount(params.negotiatedAmount);
