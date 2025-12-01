@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
-import {
-  PaymentRequirements,
-  SupportedEVMNetworks,
-  SupportedSVMNetworks,
-} from "x402/types";
+import { SupportedEVMNetworks, SupportedSVMNetworks } from "x402/types";
+import type { PaymentRequirements } from "x402/types";
 
 const ATOMIC_VALUE_REGEX = /^\d+$/;
 const DEFAULT_TTL_SECONDS = 3600;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PaymentRequirements } from "x402/types";
+import type { PaymentRequirements } from "x402/types";
 import { DpsInvoiceStore, InvoiceRecord } from "./dpsInvoices.ts";
 
 const ATOMIC_VALUE_REGEX = /^\d+$/;
